@@ -1,87 +1,87 @@
 # VICE Binary Monitor Protocol
 
-A VICE 3.5+ verziótól elérhető bináris monitor protokoll specifikációja. Ez a protokoll biztosítja az IDE-k számára a debugger integrációt.
+Specification of the binary monitor protocol available from VICE 3.5+. This protocol provides debugger integration for IDEs.
 
-## Kapcsolódás
+## Connection
 
-### Parancssori opciók
+### Command Line Options
 
 ```bash
-# Bináris monitor engedélyezése (alapértelmezett port: 6502)
+# Enable binary monitor (default port: 6502)
 x64sc -binarymonitor
 
-# Egyedi port megadása
+# Specify custom port
 x64sc -binarymonitor -binarymonitoraddress 127.0.0.1:6502
 
-# Text monitor is (opcionális, debug célra hasznos)
+# Text monitor as well (optional, useful for debugging)
 x64sc -remotemonitor -remotemonitoraddress 127.0.0.1:6510
 ```
 
-### TCP kapcsolat
+### TCP Connection
 
-- **Protokoll**: TCP/IP
-- **Alapértelmezett port**: 6502 (bináris), 6510 (text)
-- **Byte sorrend**: Little-endian minden többbájtos értékhez
+- **Protocol**: TCP/IP
+- **Default port**: 6502 (binary), 6510 (text)
+- **Byte order**: Little-endian for all multi-byte values
 
-## Üzenet formátum
+## Message Format
 
-### Parancs (Request) struktúra
+### Command (Request) Structure
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
 0       1      STX marker (0x02)
-1       1      API verzió (jelenleg: 0x02)
-2-5     4      Body hossza (UInt32LE, header és command byte nélkül)
+1       1      API version (currently: 0x02)
+2-5     4      Body length (UInt32LE, excluding header and command byte)
 6-9     4      Request ID (UInt32LE)
-10      1      Command típus
+10      1      Command type
 11+     N      Command body
 ```
 
-### Válasz (Response) struktúra
+### Response Structure
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
 0       1      STX marker (0x02)
-1       1      API verzió (jelenleg: 0x02)
-2-5     4      Body hossza (UInt32LE)
-6       1      Response típus
-7       1      Hibakód (0x00 = OK)
+1       1      API version (currently: 0x02)
+2-5     4      Body length (UInt32LE)
+6       1      Response type
+7       1      Error code (0x00 = OK)
 8-11    4      Request ID (0xFFFFFFFF = event)
 12+     N      Response body
 ```
 
-## Hibakódok
+## Error Codes
 
-| Kód    | Jelentés                       |
+| Code   | Meaning                        |
 |--------|--------------------------------|
-| 0x00   | OK - sikeres                   |
-| 0x01   | Object nem létezik             |
-| 0x02   | Érvénytelen memspace           |
-| 0x80   | Hibás hossz                    |
-| 0x81   | Érvénytelen paraméter          |
-| 0x82   | Nem támogatott API verzió      |
-| 0x83   | Ismeretlen parancs             |
-| 0x8F   | Általános hiba                 |
+| 0x00   | OK - success                   |
+| 0x01   | Object does not exist          |
+| 0x02   | Invalid memspace               |
+| 0x80   | Invalid length                 |
+| 0x81   | Invalid parameter              |
+| 0x82   | Unsupported API version        |
+| 0x83   | Unknown command                |
+| 0x8F   | General error                  |
 
-## Parancs típusok
+## Command Types
 
-### Memória műveletek
+### Memory Operations
 
-| Kód    | Parancs            | Leírás                              |
+| Code   | Command            | Description                         |
 |--------|--------------------|-------------------------------------|
-| 0x01   | Memory Get         | Memória tartalom olvasása           |
-| 0x02   | Memory Set         | Memória tartalom írása              |
+| 0x01   | Memory Get         | Read memory contents                |
+| 0x02   | Memory Set         | Write memory contents               |
 
 #### Memory Get (0x01) Request
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0       1      Side effects (0x00=nincs, 0x01=van)
-1-2     2      Kezdő cím (UInt16LE)
-3-4     2      Záró cím (UInt16LE, inclusive)
+0       1      Side effects (0x00=none, 0x01=present)
+1-2     2      Start address (UInt16LE)
+3-4     2      End address (UInt16LE, inclusive)
 5       1      Memspace (0x00=main, 0x01-0x04=drive 8-11)
 6-7     2      Bank ID (UInt16LE)
 ```
@@ -89,54 +89,54 @@ Offset  Méret  Leírás
 #### Memory Get Response
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0-1     2      Hossz (UInt16LE)
-2+      N      Memória adat
+0-1     2      Length (UInt16LE)
+2+      N      Memory data
 ```
 
-### Checkpoint (breakpoint/watchpoint) műveletek
+### Checkpoint (breakpoint/watchpoint) Operations
 
-| Kód    | Parancs              | Leírás                            |
+| Code   | Command              | Description                       |
 |--------|----------------------|-----------------------------------|
-| 0x11   | Checkpoint Get       | Checkpoint lekérdezése ID alapján |
-| 0x12   | Checkpoint Set       | Új checkpoint létrehozása         |
-| 0x13   | Checkpoint Delete    | Checkpoint törlése                |
-| 0x14   | Checkpoint List      | Összes checkpoint listázása       |
-| 0x15   | Checkpoint Toggle    | Checkpoint engedélyezése/tiltása  |
-| 0x22   | Condition Set        | Feltétel hozzáadása               |
+| 0x11   | Checkpoint Get       | Get checkpoint by ID              |
+| 0x12   | Checkpoint Set       | Create new checkpoint             |
+| 0x13   | Checkpoint Delete    | Delete checkpoint                 |
+| 0x14   | Checkpoint List      | List all checkpoints              |
+| 0x15   | Checkpoint Toggle    | Enable/disable checkpoint         |
+| 0x22   | Condition Set        | Add condition                     |
 
 #### Checkpoint Set (0x12) Request
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0-1     2      Kezdő cím (UInt16LE)
-2-3     2      Záró cím (UInt16LE)
-4       1      Stop on hit (0x00=nem, 0x01=igen)
-5       1      Engedélyezve (0x00=nem, 0x01=igen)
-6       1      CPU művelet (lásd alább)
-7       1      Temporary (0x00=nem, 0x01=igen)
-8       1      Memspace (opcionális)
+0-1     2      Start address (UInt16LE)
+2-3     2      End address (UInt16LE)
+4       1      Stop on hit (0x00=no, 0x01=yes)
+5       1      Enabled (0x00=no, 0x01=yes)
+6       1      CPU operation (see below)
+7       1      Temporary (0x00=no, 0x01=yes)
+8       1      Memspace (optional)
 ```
 
-**CPU műveletek (bitmask):**
+**CPU Operations (bitmask):**
 
-| Bit    | Érték  | Művelet                         |
+| Bit    | Value  | Operation                       |
 |--------|--------|---------------------------------|
-| 0      | 0x01   | Load - memória olvasás          |
-| 1      | 0x02   | Store - memória írás            |
-| 2      | 0x04   | Exec - végrehajtás (breakpoint) |
+| 0      | 0x01   | Load - memory read              |
+| 1      | 0x02   | Store - memory write            |
+| 2      | 0x04   | Exec - execution (breakpoint)   |
 
 #### Checkpoint Info Response (0x11)
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
 0-3     4      Checkpoint ID (UInt32LE)
-4       1      Currently hit (0x00=nem, 0x01=igen)
-5-6     2      Kezdő cím
-7-8     2      Záró cím
+4       1      Currently hit (0x00=no, 0x01=yes)
+5-6     2      Start address
+7-8     2      End address
 9       1      Stop on hit
 10      1      Enabled
 11      1      CPU operation
@@ -147,105 +147,105 @@ Offset  Méret  Leírás
 22      1      Memspace
 ```
 
-### Regiszter műveletek
+### Register Operations
 
-| Kód    | Parancs              | Leírás                          |
+| Code   | Command              | Description                     |
 |--------|----------------------|---------------------------------|
-| 0x31   | Registers Get        | CPU regiszterek lekérdezése     |
-| 0x32   | Registers Set        | CPU regiszterek módosítása      |
-| 0x83   | Registers Available  | Elérhető regiszterek listája    |
+| 0x31   | Registers Get        | Get CPU registers               |
+| 0x32   | Registers Set        | Modify CPU registers            |
+| 0x83   | Registers Available  | List available registers        |
 
-#### Register Item formátum
+#### Register Item Format
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0       1      Item méret (ez a byte nélkül)
+0       1      Item size (excluding this byte)
 1       1      Register ID
-2-3     2      Érték (UInt16LE)
+2-3     2      Value (UInt16LE)
 ```
 
-### Végrehajtás vezérlés
+### Execution Control
 
-| Kód    | Parancs                | Leírás                           |
+| Code   | Command                | Description                      |
 |--------|------------------------|----------------------------------|
-| 0x71   | Advance Instructions   | N utasítás léptetése             |
-| 0x73   | Execute Until Return   | Futás RTS/RTI-ig                 |
-| 0xAA   | Exit                   | Folytatás (resume)               |
-| 0xBB   | Quit                   | VICE bezárása                    |
-| 0xCC   | Reset                  | Rendszer reset                   |
-| 0xDD   | Autostart              | Program betöltése és indítása    |
+| 0x71   | Advance Instructions   | Step N instructions              |
+| 0x73   | Execute Until Return   | Run until RTS/RTI                |
+| 0xAA   | Exit                   | Resume (continue)                |
+| 0xBB   | Quit                   | Close VICE                       |
+| 0xCC   | Reset                  | System reset                     |
+| 0xDD   | Autostart              | Load and start program           |
 
 #### Advance Instructions (0x71) Request
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0       1      Step over subroutines (0x00=nem, 0x01=igen)
-1-2     2      Lépések száma (UInt16LE)
+0       1      Step over subroutines (0x00=no, 0x01=yes)
+1-2     2      Number of steps (UInt16LE)
 ```
 
 #### Reset (0xCC) Request
 
 ```
-Offset  Méret  Leírás
+Offset  Size   Description
 ──────────────────────────────────────────────────────────
-0       1      Reset mód:
+0       1      Reset mode:
                0x00 = soft reset
                0x01 = hard reset
                0x08-0x0B = drive 8-11 reset
 ```
 
-### Egyéb parancsok
+### Other Commands
 
-| Kód    | Parancs           | Leírás                              |
+| Code   | Command           | Description                         |
 |--------|-------------------|-------------------------------------|
-| 0x41   | Dump              | Snapshot mentése                    |
-| 0x42   | Undump            | Snapshot betöltése                  |
-| 0x51   | Resource Get      | Emulator beállítás lekérdezése      |
-| 0x52   | Resource Set      | Emulator beállítás módosítása       |
-| 0x72   | Keyboard Feed     | PETSCII szöveg billentyűzetbe       |
+| 0x41   | Dump              | Save snapshot                       |
+| 0x42   | Undump            | Load snapshot                       |
+| 0x51   | Resource Get      | Get emulator setting                |
+| 0x52   | Resource Set      | Set emulator setting                |
+| 0x72   | Keyboard Feed     | PETSCII text to keyboard            |
 | 0x81   | Ping              | Keepalive                           |
-| 0x82   | Banks Available   | Memória bankok listája              |
-| 0x84   | Display Get       | Képernyő tartalom lekérdezése       |
-| 0x85   | Emulator Info     | VICE verzió információ              |
-| 0x91   | Palette Get       | Paletta lekérdezése                 |
-| 0xA2   | Joyport Set       | Joystick szimuláció                 |
+| 0x82   | Banks Available   | List memory banks                   |
+| 0x84   | Display Get       | Get screen contents                 |
+| 0x85   | Emulator Info     | VICE version information            |
+| 0x91   | Palette Get       | Get palette                         |
+| 0xA2   | Joyport Set       | Joystick simulation                 |
 
-## Event típusok (aszinkron válaszok)
+## Event Types (Asynchronous Responses)
 
-Ezek a válaszok bármikor érkezhetnek, request ID = 0xFFFFFFFF.
+These responses can arrive at any time, request ID = 0xFFFFFFFF.
 
-| Kód    | Event       | Leírás                                |
+| Code   | Event       | Description                           |
 |--------|-------------|---------------------------------------|
-| 0x61   | JAM         | CPU JAM állapot                       |
-| 0x62   | Stopped     | Breakpoint elérve vagy step kész      |
-| 0x63   | Resumed     | Végrehajtás folytatódott              |
+| 0x61   | JAM         | CPU JAM state                         |
+| 0x62   | Stopped     | Breakpoint hit or step complete       |
+| 0x63   | Resumed     | Execution resumed                     |
 
-## Példa: Breakpoint workflow
+## Example: Breakpoint Workflow
 
 ```
-1. Kliens → VICE: Checkpoint Set (exec, enabled, $0820-$0820)
-2. VICE → Kliens: Checkpoint Info (id=1, enabled=true)
-3. Kliens → VICE: Exit (resume execution)
-4. VICE → Kliens: Resumed event
-... program fut ...
-5. VICE → Kliens: Stopped event (PC=$0820)
-6. VICE → Kliens: Checkpoint Info (id=1, hit=true)
-7. Kliens → VICE: Registers Get
-8. VICE → Kliens: Register Info (PC=$0820, A=$00, X=$01...)
-9. Kliens → VICE: Advance Instructions (1, step_over=false)
-10. VICE → Kliens: Stopped event
+1. Client → VICE: Checkpoint Set (exec, enabled, $0820-$0820)
+2. VICE → Client: Checkpoint Info (id=1, enabled=true)
+3. Client → VICE: Exit (resume execution)
+4. VICE → Client: Resumed event
+... program runs ...
+5. VICE → Client: Stopped event (PC=$0820)
+6. VICE → Client: Checkpoint Info (id=1, hit=true)
+7. Client → VICE: Registers Get
+8. VICE → Client: Register Info (PC=$0820, A=$00, X=$01...)
+9. Client → VICE: Advance Instructions (1, step_over=false)
+10. VICE → Client: Stopped event
 ```
 
-## TypeScript implementáció referencia
+## TypeScript Implementation Reference
 
-Lásd: [vscode-cc65-vice-debug](https://github.com/empathicqubit/vscode-cc65-vice-debug)
-- `src/dbg/binary-dto.ts` - Típus definíciók
-- `src/dbg/abstract-grip.ts` - Protokoll implementáció
-- `src/dbg/vice-grip.ts` - VICE specifikus logika
+See: [vscode-cc65-vice-debug](https://github.com/empathicqubit/vscode-cc65-vice-debug)
+- `src/dbg/binary-dto.ts` - Type definitions
+- `src/dbg/abstract-grip.ts` - Protocol implementation
+- `src/dbg/vice-grip.ts` - VICE specific logic
 
-## Források
+## Sources
 
 - [VICE Manual - Binary Monitor](https://vice-emu.sourceforge.io/vice_13.html)
 - [VS64 Extension](https://github.com/rolandshacks/vs64)

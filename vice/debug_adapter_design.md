@@ -1,8 +1,8 @@
 # PyCo VS Code Debugger Design
 
-A PyCo VS Code extension debugger komponensének tervezési dokumentuma. A cél: source-level debugging VICE emulátorral.
+Design document for the debugger component of the PyCo VS Code extension. The goal: source-level debugging with VICE emulator.
 
-## Architektúra áttekintés
+## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -34,22 +34,22 @@ A PyCo VS Code extension debugger komponensének tervezési dokumentuma. A cél:
                     └───────────────────┘
 ```
 
-## VICE kezelési stratégia
+## VICE Management Strategy
 
-### Egységesített megközelítés
+### Unified Approach
 
-Az extension egyetlen VICE instance-t kezel mind Run, mind Debug módban. A binary monitor protokollt (port 6502) használjuk mindkét esetben.
+The extension manages a single VICE instance for both Run and Debug modes. We use the binary monitor protocol (port 6502) in both cases.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  VS Code Extension                                           │
 │                                                              │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │              ViceManager (közös komponens)             │  │
+│  │              ViceManager (shared component)            │  │
 │  │                                                        │  │
-│  │  1. Kell-e compile? (source újabb mint PRG?)           │  │
-│  │  2. VICE fut? → csatlakozás : indítás + várakozás      │  │
-│  │  3. Program betöltés (autostart parancs)               │  │
+│  │  1. Need to compile? (is source newer than PRG?)       │  │
+│  │  2. VICE running? → connect : start + wait             │  │
+│  │  3. Program load (autostart command)                   │  │
 │  └────────────────────────────────────────────────────────┘  │
 │                │                              │               │
 │    [▶ Run Without Debug]            [▶ Start Debugging]      │
@@ -57,12 +57,12 @@ Az extension egyetlen VICE instance-t kezel mind Run, mind Debug módban. A bina
 │                │                              │               │
 │    - pycoc compile               - pycoc compile --debug     │
 │    - autostart + exit            - autostart                 │
-│    - VICE fut tovább             - breakpoints beállítása    │
+│    - VICE continues running      - set breakpoints           │
 │                                  - stopped on entry/BP       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-### ViceManager implementáció
+### ViceManager Implementation
 
 ```typescript
 class ViceManager {
@@ -70,23 +70,23 @@ class ViceManager {
     private viceClient: ViceClient;
 
     /**
-     * VICE kapcsolat biztosítása - indít ha kell, vár amíg elérhető
+     * Ensure VICE connection - starts if needed, waits until available
      */
     async ensureViceRunning(): Promise<void> {
-        // Már fut és csatlakozva?
+        // Already running and connected?
         if (await this.viceClient.tryConnect()) {
             return;
         }
 
-        // Indítás
+        // Start
         this.viceProcess = spawn(this.vicePath, [
             '-binarymonitor',
             '-binarymonitoraddress', '127.0.0.1:6502',
-            '+confirmexit',      // Ne kérdezzen kilépéskor
+            '+confirmexit',      // Don't ask on exit
             '-autostartprgmode', '1'  // Autostart: inject to RAM
         ]);
 
-        // Várakozás a portra (race condition elkerülése)
+        // Wait for port (avoiding race condition)
         const maxRetries = 50;
         for (let i = 0; i < maxRetries; i++) {
             await sleep(100);  // 100ms
@@ -98,33 +98,33 @@ class ViceManager {
     }
 
     /**
-     * Program futtatása - közös logika Run és Debug módhoz
+     * Run program - shared logic for Run and Debug modes
      */
     async runProgram(pycoFile: string, debugMode: boolean): Promise<void> {
         const prgFile = pycoFile.replace('.pyco', '.prg');
 
-        // 1. Compile ha szükséges
+        // 1. Compile if needed
         if (await this.needsRecompile(pycoFile, prgFile)) {
             const debugFlag = debugMode ? '--debug' : '';
             await exec(`pycoc compile ${debugFlag} "${pycoFile}"`);
         }
 
-        // 2. VICE biztosítása
+        // 2. Ensure VICE
         await this.ensureViceRunning();
 
-        // 3. Program betöltés
+        // 3. Load program
         await this.viceClient.autostart(prgFile);
 
-        // 4. Debug vs Run különbség
+        // 4. Debug vs Run difference
         if (!debugMode) {
-            // Run: egyszerűen folytatás
+            // Run: simply continue
             await this.viceClient.exit();
         }
-        // Debug: a hívó állítja be a breakpointokat és kezeli a stopped eventeket
+        // Debug: caller sets breakpoints and handles stopped events
     }
 
     /**
-     * Ellenőrzi, hogy kell-e újrafordítani
+     * Check if recompilation is needed
      */
     private async needsRecompile(source: string, target: string): Promise<boolean> {
         try {
@@ -132,43 +132,43 @@ class ViceManager {
             const targetStat = await fs.stat(target);
             return sourceStat.mtimeMs > targetStat.mtimeMs;
         } catch {
-            return true;  // Ha a target nem létezik
+            return true;  // If target doesn't exist
         }
     }
 }
 ```
 
-### Race condition kezelése
+### Race Condition Handling
 
-A VICE indítása és a TCP port megnyitása között van egy kis késleltetés. A `ensureViceRunning()` retry loop-pal kezeli ezt:
+There is a small delay between VICE starting and the TCP port being opened. The `ensureViceRunning()` handles this with a retry loop:
 
 ```
-Idővonal:
+Timeline:
 ─────────────────────────────────────────────────────────────
-0ms      spawn('x64sc', [...])     VICE process indul
-~50ms    VICE inicializál          GUI betöltése
-~200ms   Binary monitor ready      Port 6502 figyel
+0ms      spawn('x64sc', [...])     VICE process starts
+~50ms    VICE initializes          GUI loading
+~200ms   Binary monitor ready      Port 6502 listening
 ─────────────────────────────────────────────────────────────
          ↑
-         tryConnect() retry loop (max 5 sec, 100ms intervallumon)
+         tryConnect() retry loop (max 5 sec, 100ms interval)
 ```
 
 ### pycoc run vs Extension
 
-| Aspektus | pycoc run (CLI) | Extension |
-|----------|-----------------|-----------|
-| Használat | Terminálból | VS Code-ból |
-| Monitor | Text (6510) | Binary (6502) |
-| Debug támogatás | Nincs | Van |
-| VICE kezelés | Saját logika | ViceManager |
+| Aspect      | pycoc run (CLI) | Extension   |
+|-------------|-----------------|-------------|
+| Usage       | From terminal   | From VS Code |
+| Monitor     | Text (6510)     | Binary (6502) |
+| Debug support | None          | Yes         |
+| VICE management | Own logic   | ViceManager |
 
-A `pycoc run` parancs **megmarad** CLI használatra, de VS Code-ból az extension kezeli a VICE-t közvetlenül.
+The `pycoc run` command **remains** for CLI usage, but from VS Code the extension manages VICE directly.
 
-## Komponensek
+## Components
 
 ### 1. Debug Adapter (src/debugger/debug-adapter.ts)
 
-VS Code Debug Adapter Protocol (DAP) implementáció.
+VS Code Debug Adapter Protocol (DAP) implementation.
 
 ```typescript
 import {
@@ -185,7 +185,7 @@ class PyCoDebugSession extends DebugSession {
     private viceClient: ViceClient;
     private variableManager: VariableManager;
 
-    // DAP kérések kezelése
+    // DAP request handling
     protected initializeRequest(response, args);
     protected launchRequest(response, args);
     protected attachRequest(response, args);
@@ -204,7 +204,7 @@ class PyCoDebugSession extends DebugSession {
 
 ### 2. VICE Client (src/debugger/vice-client.ts)
 
-TCP kapcsolat és bináris protokoll implementáció.
+TCP connection and binary protocol implementation.
 
 ```typescript
 class ViceClient extends EventEmitter {
@@ -213,11 +213,11 @@ class ViceClient extends EventEmitter {
     private pendingRequests: Map<number, PendingRequest>;
     private responseBuffer: Buffer;
 
-    // Kapcsolat kezelés
+    // Connection management
     async connect(host: string, port: number): Promise<void>;
     async disconnect(): Promise<void>;
 
-    // Parancsok küldése
+    // Command sending
     async memoryGet(start: number, end: number): Promise<Buffer>;
     async memorySet(address: number, data: Buffer): Promise<void>;
     async checkpointSet(address: number, type: CpuOperation): Promise<number>;
@@ -228,14 +228,14 @@ class ViceClient extends EventEmitter {
     async continue(): Promise<void>;
     async reset(hard: boolean): Promise<void>;
 
-    // Események
+    // Events
     on(event: 'stopped', listener: (pc: number) => void): this;
     on(event: 'resumed', listener: () => void): this;
     on(event: 'disconnected', listener: () => void): this;
 }
 ```
 
-#### Bináris protokoll implementáció
+#### Binary Protocol Implementation
 
 ```typescript
 private buildCommand(type: CommandType, body: Buffer): Buffer {
@@ -262,7 +262,7 @@ private parseResponse(data: Buffer): Response {
 
 ### 3. Source Mapper (src/debugger/source-mapper.ts)
 
-PyCo forráskód ↔ assembly cím leképezés.
+PyCo source code ↔ assembly address mapping.
 
 ```typescript
 interface SourceLocation {
@@ -272,21 +272,21 @@ interface SourceLocation {
 }
 
 interface AddressMapping {
-    address: number;        // 6502 cím
-    source: SourceLocation; // PyCo forrás pozíció
-    asmLine?: number;       // Assembly sor (opcionális)
-    label?: string;         // Címke (ha van)
+    address: number;        // 6502 address
+    source: SourceLocation; // PyCo source position
+    asmLine?: number;       // Assembly line (optional)
+    label?: string;         // Label (if any)
 }
 
 class SourceMapper {
     private mappings: AddressMapping[] = [];
     private labelMap: Map<string, number> = new Map();
 
-    // Debug info betöltése
+    // Load debug info
     loadFromDebugFile(debugFile: string): void;
     loadFromLabelFile(labelFile: string): void;
 
-    // Leképezések
+    // Mappings
     getSourceLocation(address: number): SourceLocation | undefined;
     getAddress(file: string, line: number): number | undefined;
     getLabel(address: number): string | undefined;
@@ -296,14 +296,14 @@ class SourceMapper {
 
 ### 4. Variable Manager (src/debugger/variable-manager.ts)
 
-PyCo változók megjelenítése a debug UI-ban.
+Display PyCo variables in the debug UI.
 
 ```typescript
 interface PyCoVariable {
     name: string;
     type: string;           // byte, word, int, float, etc.
-    address: number;        // Memória cím
-    size: number;           // Méret bájtokban
+    address: number;        // Memory address
+    size: number;           // Size in bytes
     scope: 'global' | 'local' | 'parameter';
     frameOffset?: number;   // Stack offset (local/param)
 }
@@ -311,23 +311,23 @@ interface PyCoVariable {
 class VariableManager {
     private variables: Map<string, PyCoVariable> = new Map();
 
-    // Változó definíciók betöltése (debug info-ból)
+    // Load variable definitions (from debug info)
     loadVariables(debugInfo: DebugInfo): void;
 
-    // Érték olvasás
+    // Read value
     async getValue(variable: PyCoVariable, viceClient: ViceClient): Promise<string>;
     async getLocalValue(name: string, fp: number, viceClient: ViceClient): Promise<string>;
 
-    // Formázás típus szerint
+    // Format by type
     formatValue(data: Buffer, type: string): string;
 }
 ```
 
-## Debug Info formátum
+## Debug Info Format
 
-A PyCo compiler generáljon debug info fájlt fordításkor.
+The PyCo compiler should generate a debug info file during compilation.
 
-### Javasolt formátum: JSON
+### Proposed Format: JSON
 
 ```json
 {
@@ -382,9 +382,9 @@ A PyCo compiler generáljon debug info fájlt fordításkor.
 }
 ```
 
-### VICE Label fájl generálás
+### VICE Label File Generation
 
-A compiler generáljon `.vs` fájlt is VICE kompatibilitáshoz:
+The compiler should also generate a `.vs` file for VICE compatibility:
 
 ```
 al C:080d .__F_main
@@ -392,9 +392,9 @@ al C:0900 .__B_score
 al C:0820 .main_loop
 ```
 
-## VS Code integráció
+## VS Code Integration
 
-### launch.json konfiguráció
+### launch.json Configuration
 
 ```json
 {
@@ -423,7 +423,7 @@ al C:0820 .main_loop
 }
 ```
 
-### package.json kiegészítések
+### package.json Additions
 
 ```json
 {
@@ -469,47 +469,47 @@ al C:0820 .main_loop
 }
 ```
 
-## Implementációs fázisok
+## Implementation Phases
 
-### Fázis 1: Alapvető debugging
+### Phase 1: Basic Debugging
 
-1. **VICE kapcsolat** - TCP kliens a bináris protokollhoz
-2. **Launch/Attach** - VICE indítása vagy csatlakozás
-3. **Breakpoint-ok** - Source line → address mapping
-4. **Step parancsok** - Step in, step over, continue
-5. **Regiszterek** - CPU regiszterek megjelenítése
+1. **VICE connection** - TCP client for binary protocol
+2. **Launch/Attach** - Start VICE or connect to existing
+3. **Breakpoints** - Source line → address mapping
+4. **Step commands** - Step in, step over, continue
+5. **Registers** - Display CPU registers
 
-### Fázis 2: Variable inspection
+### Phase 2: Variable Inspection
 
-1. **Global változók** - BSS szegmens változók
-2. **Local változók** - Stack frame alapú elérés
-3. **Watch expressions** - Tetszőleges memória figyelés
+1. **Global variables** - BSS segment variables
+2. **Local variables** - Stack frame based access
+3. **Watch expressions** - Arbitrary memory watching
 
-### Fázis 3: Advanced features
+### Phase 3: Advanced Features
 
 1. **Call stack** - JSR/RTS tracking
 2. **Conditional breakpoints** - VICE condition syntax
 3. **Memory view** - Hex dump panel
-4. **Disassembly view** - Assembly mellett PyCo source
+4. **Disassembly view** - Assembly alongside PyCo source
 
-## Compiler támogatás (Implementálva ✅)
+## Compiler Support (Implemented ✅)
 
-### Debug info generálás
+### Debug Info Generation
 
-A debug info **mindig** generálódik fordításkor, nincs külön flag:
+Debug info is **always** generated during compilation, there's no separate flag:
 
 ```bash
 pycoc compile game.pyco
 
-# Kimeneti fájlok:
+# Output files:
 # - build/game.prg    (program)
-# - build/game.asm    (assembly forrás)
+# - build/game.asm    (assembly source)
 # - build/game.dbg    (JSON debug info)
 ```
 
-### Debug info formátum (.dbg)
+### Debug Info Format (.dbg)
 
-Az assembler generálja a `.dbg` fájlt, amely tartalmazza a valós memóriacímeket:
+The assembler generates the `.dbg` file, which contains the actual memory addresses:
 
 ```json
 {
@@ -526,35 +526,35 @@ Az assembler generálja a `.dbg` fájlt, amely tartalmazza a valós memóriacím
 }
 ```
 
-### Implementáció
+### Implementation
 
-1. **CodeGenerator** (`generator.py`) - `__SRC_filename_pyco_LINE` label-eket generál minden PyCo sornál
-2. **Assembler** (`assembler/codegen.py`) - `get_debug_info()` metódus kinyeri a label címeket
-3. **CLI** (`cli.py`) - `assemble_with_debug()` hívás és `.dbg` fájl írás
+1. **CodeGenerator** (`generator.py`) - Generates `__SRC_filename_pyco_LINE` labels at each PyCo line
+2. **Assembler** (`assembler/codegen.py`) - `get_debug_info()` method extracts label addresses
+3. **CLI** (`cli.py`) - `assemble_with_debug()` call and `.dbg` file writing
 
-## Referencia implementációk
+## Reference Implementations
 
 - **[VS64](https://github.com/rolandshacks/vs64)** - Full C64 dev environment
 - **[vscode-cc65-vice-debug](https://github.com/empathicqubit/vscode-cc65-vice-debug)** - CC65 debugger
 - **[IceBro Lite](https://github.com/Sakrac/IceBroLite)** - Standalone 6502 debugger
 
-## Tesztelési stratégia
+## Testing Strategy
 
-### Unit tesztek
+### Unit Tests
 
-1. Bináris protokoll encoder/decoder
+1. Binary protocol encoder/decoder
 2. Source mapper lookup
 3. Variable formatter
 
-### Integration tesztek
+### Integration Tests
 
-1. VICE kapcsolat lifecycle
+1. VICE connection lifecycle
 2. Breakpoint set/hit/delete
-3. Step műveletek
-4. Memória olvasás/írás
+3. Step operations
+4. Memory read/write
 
-### E2E tesztek
+### E2E Tests
 
-1. Teljes debug session workflow
-2. Több breakpoint kezelése
-3. Variable inspection különböző típusokkal
+1. Complete debug session workflow
+2. Multiple breakpoint handling
+3. Variable inspection with different types

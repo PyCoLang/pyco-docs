@@ -1,147 +1,147 @@
-# VICE Text Monitor parancsok
+# VICE Text Monitor Commands
 
-A VICE beépített monitor parancssoros felületének referenciája. Bár a VS Code debugger integrációhoz a bináris protokollt használjuk, a text monitor hasznos debug és teszt célokra.
+Reference for VICE's built-in command-line monitor interface. Although we use the binary protocol for VS Code debugger integration, the text monitor is useful for debugging and testing purposes.
 
-## Kapcsolódás
+## Connection
 
 ```bash
-# Remote monitor engedélyezése
+# Enable remote monitor
 x64sc -remotemonitor -remotemonitoraddress 127.0.0.1:6510
 
-# Telnet/netcat csatlakozás
+# Connect via telnet/netcat
 nc localhost 6510
 ```
 
-## Breakpoint parancsok
+## Breakpoint Commands
 
-### break - Végrehajtási breakpoint
+### break - Execution Breakpoint
 
 ```
 break [load|store|exec] [address [address] [if <cond_expr>]]
 
-# Példák:
-break $0820                    # Breakpoint a $0820 címen
-break $0820 $0830              # Breakpoint a $0820-$0830 tartományban
-break exec $0820               # Csak végrehajtásra (alapértelmezett)
-break load $d020               # Olvasásra triggerel
-break store $d020              # Írásra triggerel
-break $0820 if a == $ff        # Feltételes breakpoint
+# Examples:
+break $0820                    # Breakpoint at address $0820
+break $0820 $0830              # Breakpoint in range $0820-$0830
+break exec $0820               # Execution only (default)
+break load $d020               # Trigger on read
+break store $d020              # Trigger on write
+break $0820 if a == $ff        # Conditional breakpoint
 ```
 
-### watch - Memória watchpoint
+### watch - Memory Watchpoint
 
 ```
 watch [load|store] [address [address] [if <cond_expr>]]
 
-# Példák:
-watch $d020                    # Watch a border color regiszteren
-watch store $0400 $07ff        # Screen RAM írás figyelése
+# Examples:
+watch $d020                    # Watch the border color register
+watch store $0400 $07ff        # Watch screen RAM writes
 ```
 
-### trace - Tracepoint (nem állítja meg)
+### trace - Tracepoint (does not stop)
 
 ```
 trace [load|store|exec] [address [address] [if <cond_expr>]]
 
-# Példák:
-trace $0820                    # Trace message, de nem áll meg
+# Examples:
+trace $0820                    # Trace message, but doesn't stop
 ```
 
-### Checkpoint kezelés
+### Checkpoint Management
 
 ```
-delete <checkpoint_id>         # Checkpoint törlése
-enable <checkpoint_id>         # Checkpoint engedélyezése
-disable <checkpoint_id>        # Checkpoint letiltása
-ignore <checkpoint_id> <count> # N találat figyelmen kívül hagyása
+delete <checkpoint_id>         # Delete checkpoint
+enable <checkpoint_id>         # Enable checkpoint
+disable <checkpoint_id>        # Disable checkpoint
+ignore <checkpoint_id> <count> # Ignore N hits
 ```
 
-## Végrehajtás vezérlés
+## Execution Control
 
 ```
-g [address]                    # Go - futtatás (opcionális címtől)
-n [count]                      # Next - step over (subroutine-on átlép)
+g [address]                    # Go - run (optionally from address)
+n [count]                      # Next - step over (steps over subroutines)
 z [count]                      # Step - step into
-return                         # Futás RTS/RTI-ig
-until <address>                # Futás adott címig
+return                         # Run until RTS/RTI
+until <address>                # Run until address
 ```
 
-## Memória parancsok
+## Memory Commands
 
-### m/mem - Memória megjelenítés
+### m/mem - Memory Display
 
 ```
 m [radix] [address_range]
 
-# Radix opciók:
+# Radix options:
 # (default) - hex
-# b - bináris
-# o - oktális
-# d - decimális
+# b - binary
+# o - octal
+# d - decimal
 
-# Példák:
+# Examples:
 m $0800 $08ff                  # Hex dump $0800-$08ff
-m b $d020 $d021                # Bináris megjelenítés
+m b $d020 $d021                # Binary display
 ```
 
-### > - Memória írás
+### > - Memory Write
 
 ```
 > [address] <data_list>
 
-# Példák:
-> $0400 $01 $02 $03            # Bájtok írása
-> $c000 .hello                 # Címke értékének írása
+# Examples:
+> $0400 $01 $02 $03            # Write bytes
+> $c000 .hello                 # Write label value
 ```
 
-### f/fill - Memória kitöltés
+### f/fill - Memory Fill
 
 ```
 f <address_range> <data_list>
 
-# Példák:
-f $0400 $07ff $20              # Screen RAM törlése (space)
-f $d800 $dbff $01              # Color RAM fehérre
+# Examples:
+f $0400 $07ff $20              # Clear screen RAM (space)
+f $d800 $dbff $01              # Set color RAM to white
 ```
 
-### h/hunt - Memória keresés
+### h/hunt - Memory Search
 
 ```
 h <address_range> <data_list>
 
-# Példák:
-h $0800 $ffff $4c $00 $08      # JMP $0800 keresése
-h $0800 $ffff "hello"          # String keresése
-h $0800 $ffff ? $00 $08        # Wildcard (?) használata
+# Examples:
+h $0800 $ffff $4c $00 $08      # Search for JMP $0800
+h $0800 $ffff "hello"          # Search for string
+h $0800 $ffff ? $00 $08        # Use wildcard (?)
 ```
 
-### c/compare - Memória összehasonlítás
+### c/compare - Memory Compare
 
 ```
 c <address_range> <address>
 
-# Példa:
-c $0800 $08ff $0900            # $0800-$08ff összehasonlítása $0900-tól
+# Example:
+c $0800 $08ff $0900            # Compare $0800-$08ff with $0900
 ```
 
-## Regiszterek
+## Registers
 
-### r/registers - Regiszter megjelenítés/módosítás
+### r/registers - Register Display/Modify
 
 ```
 r [reg_name = value]
 
-# Példák:
-r                              # Összes regiszter kiírása
-r a = $ff                      # A regiszter beállítása
-r pc = $0820                   # Program counter beállítása
+# Examples:
+r                              # Display all registers
+r a = $ff                      # Set A register
+r pc = $0820                   # Set program counter
 ```
 
-**Regiszterek:**
+**Registers:**
 - `PC` - Program Counter
-- `A` - Akkumulátor
-- `X` - X regiszter
-- `Y` - Y regiszter
+- `A` - Accumulator
+- `X` - X register
+- `Y` - Y register
 - `SP` - Stack Pointer
 - `FL` - Status flags
 
@@ -150,34 +150,34 @@ r pc = $0820                   # Program counter beállítása
 ```
 d [address [address]]          # Disassembly
 
-# Példák:
-d                              # Aktuális PC-től
-d $0800                        # $0800-tól
-d $0800 $08ff                  # Tartomány
+# Examples:
+d                              # From current PC
+d $0800                        # From $0800
+d $0800 $08ff                  # Range
 ```
 
-## Label kezelés
+## Label Management
 
-### ll - Label fájl betöltése
+### ll - Load Label File
 
 ```
 ll "filename"
 
-# Példák:
-ll "program.lbl"               # VICE label fájl
-ll "program.sym"               # Szimbólum fájl
+# Examples:
+ll "program.lbl"               # VICE label file
+ll "program.sym"               # Symbol file
 ```
 
-### al - Label hozzáadása
+### al - Add Label
 
 ```
 al <address> <label>
 
-# Példák:
-al c:$0820 .main               # Label hozzáadása
+# Examples:
+al c:$0820 .main               # Add label
 ```
 
-### Label fájl formátum
+### Label File Format
 
 ```
 al C:080d .entry
@@ -185,77 +185,77 @@ al C:0854 .entry::frame_loop
 al C:0890 ._main
 ```
 
-Minden sor: `al C:[hex_address] [label_name]`
+Each line: `al C:[hex_address] [label_name]`
 
-- Label neveknek `.` karakterrel kell kezdődniük
-- A `::` szeparátor használható nested/scoped labelekhez
-- A `C:` prefix a CPU memspace-t jelöli
+- Label names must start with `.` character
+- The `::` separator can be used for nested/scoped labels
+- The `C:` prefix indicates the CPU memspace
 
-## I/O parancsok
+## I/O Commands
 
-### l - Program betöltése
+### l - Load Program
 
 ```
 l "filename" [device] [address]
 
-# Példák:
-l "program.prg"                # PRG betöltése (első 2 byte = load address)
-l "program.prg" 0 $0800        # Betöltés adott címre
+# Examples:
+l "program.prg"                # Load PRG (first 2 bytes = load address)
+l "program.prg" 0 $0800        # Load to specific address
 ```
 
-### s - Memória mentése
+### s - Save Memory
 
 ```
 s "filename" <device> <address> <address>
 
-# Példák:
-s "dump.bin" 0 $0800 $08ff     # Mentés fájlba
+# Examples:
+s "dump.bin" 0 $0800 $08ff     # Save to file
 ```
 
-### @ - Disk parancs
+### @ - Disk Command
 
 ```
-@                              # Disk status lekérdezése
-@$                             # Directory listázás
+@                              # Get disk status
+@$                             # Directory listing
 ```
 
-## Egyéb hasznos parancsok
+## Other Useful Commands
 
 ```
-x                              # Kilépés a monitorból (folytatás)
+x                              # Exit monitor (continue)
 reset [0|1]                    # 0=soft reset, 1=hard reset
-bank [id]                      # Aktív memória bank váltása
-cpu [6502|z80]                 # CPU típus (C128)
-io                             # I/O regiszterek megjelenítése
-screen                         # Screen RAM tartalom
+bank [id]                      # Switch active memory bank
+cpu [6502|z80]                 # CPU type (C128)
+io                             # Display I/O registers
+screen                         # Screen RAM contents
 ```
 
-## Feltételes kifejezések
+## Conditional Expressions
 
-Breakpoint és watch feltételekben használható operátorok:
+Operators available in breakpoint and watch conditions:
 
 ```
-# Összehasonlítás
+# Comparison
 == != < > <= >=
 
-# Logikai
+# Logical
 && || !
 
 # Bitwise
 & | ^
 
-# Regiszterek
+# Registers
 a x y sp pc
 
-# Memória elérés
+# Memory access
 @($address)
 
-# Példák:
+# Examples:
 break $0820 if a == $00 && x > $10
 break $0820 if @($d020) == $00
 ```
 
-## Források
+## Sources
 
 - [VICE Manual - Monitor](https://vice-emu.sourceforge.io/vice_12.html)
 - [cc65 Debugging Guide](https://cc65.github.io/doc/debugging.html)

@@ -1,76 +1,76 @@
 # VICE Debugger Reference Implementations
 
-Ez a dokumentum összefoglalja a létező VICE debugger implementációk tanulságait.
+This document summarizes lessons learned from existing VICE debugger implementations.
 
-## Vizsgált projektek
+## Examined Projects
 
-| Projekt | Nyelv | GitHub | Fő tanulság |
-|---------|-------|--------|-------------|
-| VS64 | JavaScript | [rolandshacks/vs64](https://github.com/rolandshacks/vs64) | Referencia VS Code debugger |
-| cc65-debugger | TypeScript | [empathicqubit/vscode-cc65-debugger](https://github.com/empathicqubit/vscode-cc65-debugger) | Jól strukturált protokoll kezelés |
-| pyvicemon | Python | [Galfodo/pyvicemon](https://github.com/Galfodo/pyvicemon) | Tiszta protokoll implementáció |
-| IceBro Lite | C++ | [Sakrac/IceBroLite](https://github.com/Sakrac/IceBroLite) | Standalone GUI debugger |
+| Project       | Language   | GitHub                                                                 | Key Lesson                         |
+|---------------|------------|------------------------------------------------------------------------|------------------------------------|
+| VS64          | JavaScript | [rolandshacks/vs64](https://github.com/rolandshacks/vs64)              | Reference VS Code debugger         |
+| cc65-debugger | TypeScript | [empathicqubit/vscode-cc65-debugger](https://github.com/empathicqubit/vscode-cc65-debugger) | Well-structured protocol handling |
+| pyvicemon     | Python     | [Galfodo/pyvicemon](https://github.com/Galfodo/pyvicemon)              | Clean protocol implementation      |
+| IceBro Lite   | C++        | [Sakrac/IceBroLite](https://github.com/Sakrac/IceBroLite)              | Standalone GUI debugger            |
 
-## VS64 - Kritikus tanulságok
+## VS64 - Critical Lessons
 
-### VICE indítási szekvencia
+### VICE Startup Sequence
 
-A VS64 a következő parancssoron indítja a VICE-t:
+VS64 starts VICE with the following command line:
 
 ```bash
 x64sc +remotemonitor -binarymonitor -binarymonitoraddress ip4://127.0.0.1:6502 -autostartprgmode 1
 ```
 
-**Kritikus opciók:**
-- `+remotemonitor` - Text monitor KIKAPCSOLÁSA (csak binary!)
-- `-autostartprgmode 1` - PRG injektálása RAM-ba (nem autostart!)
+**Critical options:**
+- `+remotemonitor` - DISABLE text monitor (binary only!)
+- `-autostartprgmode 1` - PRG injection into RAM (not autostart!)
 
-### Program betöltési szekvencia
+### Program Loading Sequence
 
 ```javascript
-// VS64 debug_vice.js - loadProgram() metódus
+// VS64 debug_vice.js - loadProgram() method
 async loadProgram(filename) {
     await this.init();
-    await this.cmdReset();                    // 1. RESET küldése!
+    await this.cmdReset();                    // 1. Send RESET!
     await this.cmdAutostart(filename, true);  // 2. Binary autostart
 }
 ```
 
-**KRITIKUS:** A RESET parancs küldése ELŐBB történik, mint az autostart!
+**CRITICAL:** The RESET command is sent BEFORE autostart!
 
-### Debug session indítása
+### Debug Session Initialization
 
 ```
 VS64 Initialization Sequence:
 ─────────────────────────────────────────────────────────────────
-1. VICE spawn (üres, program nélkül!)
-2. Socket connect (retry loop 250ms intervallumon)
-3. cmdRegistersAvailable() - regiszter lista lekérése
-4. cmdBanksAvailable() - memória bankok lekérése
+1. VICE spawn (empty, without program!)
+2. Socket connect (retry loop at 250ms interval)
+3. cmdRegistersAvailable() - get register list
+4. cmdBanksAvailable() - get memory banks
 5. loadProgram():
    a. cmdReset()
    b. cmdAutostart(filename)
-6. setBreakpoints() - breakpointok beállítása
-7. start() → cmdExit() - futás indítása
+6. setBreakpoints() - set breakpoints
+7. start() → cmdExit() - start execution
 ─────────────────────────────────────────────────────────────────
 ```
 
-### Breakpoint kezelés
+### Breakpoint Handling
 
 ```javascript
-// setBreakpoints() metódus
+// setBreakpoints() method
 async setBreakpoints(breakpoints) {
-    // 1. Meglévő checkpointok lekérése
+    // 1. Get existing checkpoints
     const existing = await this.cmdCheckpointList();
 
-    // 2. Nem szükséges checkpointok törlése
+    // 2. Delete unnecessary checkpoints
     for (const cp of existing) {
         if (!breakpoints.find(bp => bp.address === cp.address)) {
             await this.cmdCheckpointDelete(cp.id);
         }
     }
 
-    // 3. Új checkpointok létrehozása
+    // 3. Create new checkpoints
     for (const bp of breakpoints) {
         if (!existing.find(cp => cp.address === bp.address)) {
             await this.cmdCheckpointSet(bp.address, bp.address, true, true, 0x04);
@@ -79,27 +79,27 @@ async setBreakpoints(breakpoints) {
 }
 ```
 
-### Stopped event kezelés
+### Stopped Event Handling
 
 ```javascript
-// RESPONSE_STOPPED (0x62) event feldolgozása
+// RESPONSE_STOPPED (0x62) event processing
 onStoppedEvent(response) {
     const pc = this.registers.pc;
 
-    // Step mód: ellenőrizzük, hogy source sornál vagyunk-e
+    // Step mode: check if we're at a source line
     if (this.stepMode) {
         const info = this.debugInfo.getAddressInfo(pc);
         if (!info || !info.line) {
-            // Köztes kód - folytatjuk automatikusan
+            // Intermediate code - continue automatically
             this.cmdExit();
             return;
         }
     }
 
-    // Breakpoint: melyik checkpoint?
+    // Breakpoint: which checkpoint?
     const checkpoint = this.findCheckpointAtAddress(pc);
 
-    // DAP StoppedEvent küldése
+    // Send DAP StoppedEvent
     this.sendEvent('stopped', {
         reason: checkpoint ? 'breakpoint' : 'step',
         threadId: 1
@@ -107,12 +107,12 @@ onStoppedEvent(response) {
 }
 ```
 
-## cc65-debugger - Protokoll kezelés
+## cc65-debugger - Protocol Handling
 
-### binary-dto.ts - Üzenettípusok
+### binary-dto.ts - Message Types
 
 ```typescript
-// Command típusok
+// Command types
 export enum CommandType {
     memoryGet = 0x01,
     memorySet = 0x02,
@@ -132,7 +132,7 @@ export enum CommandType {
     autostart = 0xdd,
 }
 
-// Response típusok
+// Response types
 export enum ResponseType {
     stopped = 0x62,     // Emulator stopped (breakpoint, step)
     resumed = 0x63,     // Emulator resumed
@@ -141,10 +141,10 @@ export enum ResponseType {
 }
 ```
 
-### Aszinkron válaszkezelés
+### Asynchronous Response Handling
 
 ```typescript
-// Request ID alapú válasz kezelés
+// Request ID based response handling
 class BinaryProtocol {
     private pendingRequests: Map<number, Promise>;
     private requestId: number = 0;
@@ -162,13 +162,13 @@ class BinaryProtocol {
     onData(data: Buffer) {
         const response = this.parseResponse(data);
 
-        // Event response (nincs request ID)
+        // Event response (no request ID)
         if (response.type === ResponseType.stopped) {
             this.emit('stopped', response);
             return;
         }
 
-        // Request válasz
+        // Request response
         const resolver = this.pendingRequests.get(response.requestId);
         if (resolver) {
             resolver(response);
@@ -178,9 +178,9 @@ class BinaryProtocol {
 }
 ```
 
-## pyvicemon - Python referencia
+## pyvicemon - Python Reference
 
-### Protokoll header formátum
+### Protocol Header Format
 
 ```python
 # Command header (11 bytes)
@@ -203,11 +203,11 @@ RESPONSE_HEADER = [
 ]
 ```
 
-### Event polling
+### Event Polling
 
 ```python
 def wait_for_debugger_event(timeout=1.0):
-    """Várakozás VICE eseményre (breakpoint, JAM, stb.)"""
+    """Wait for VICE event (breakpoint, JAM, etc.)"""
     sock.settimeout(timeout)
 
     while True:
@@ -222,69 +222,69 @@ def wait_for_debugger_event(timeout=1.0):
                 return response
 
         except socket.timeout:
-            return None  # Nincs esemény
+            return None  # No event
 ```
 
-## Összehasonlítás: Mi volt rossz a PyCo megközelítésben
+## Comparison: What Was Wrong with PyCo Approach
 
-### Eredeti PyCo szekvencia (HIBÁS)
+### Original PyCo Sequence (WRONG)
 
 ```
-1. VICE indítása: x64sc -binarymonitor -autostart-delay 3 program.prg
+1. Start VICE: x64sc -binarymonitor -autostart-delay 3 program.prg
 2. Socket connect
-3. Breakpoint beállítása
+3. Set breakpoint
 4. cmdExit() (continue)
 ```
 
-**Problémák:**
-1. A PRG parancssoron → VICE rögtön elkezdi az autostart-ot
-2. A `-autostart-delay` késlelteti, de a VICE "stopped" állapotba kerül connect-kor
-3. A program már túlment az entry pointon mire a breakpoint beáll
+**Problems:**
+1. PRG on command line → VICE immediately starts autostart
+2. `-autostart-delay` delays it, but VICE goes to "stopped" state on connect
+3. Program has already passed the entry point by the time breakpoint is set
 
-### Helyes szekvencia (VS64 alapján)
+### Correct Sequence (based on VS64)
 
 ```
-1. VICE indítása: x64sc -binarymonitor (PROGRAM NÉLKÜL!)
+1. Start VICE: x64sc -binarymonitor (WITHOUT PROGRAM!)
 2. Socket connect
 3. cmdReset()
 4. cmdAutostart(program.prg, run=true)  # Binary protocol autostart
-5. Breakpoint beállítása
+5. Set breakpoint
 6. cmdExit() (continue)
 ```
 
-**Miért működik ez:**
-1. VICE üres állapotban indul
-2. Reset biztosítja a tiszta állapotot
-3. Binary autostart betölti a programot DE MÉG NEM INDÍTJA (run=false esetén)
-4. Breakpointok beállíthatók
-5. Exit parancs indítja a programot
+**Why this works:**
+1. VICE starts in empty state
+2. Reset ensures clean state
+3. Binary autostart loads program BUT DOESN'T START IT (when run=false)
+4. Breakpoints can be set
+5. Exit command starts the program
 
-## Implementációs terv a PyCo-hoz
+## Implementation Plan for PyCo
 
-### 1. Módosítások a ViceManager-ben
+### 1. ViceManager Modifications
 
 ```typescript
 // vice-manager.ts
 
 async debugProgram(prgFile: string, entryPointAddress?: number): Promise<void> {
-    // 1. VICE indítása ÜRES állapotban
+    // 1. Start VICE in EMPTY state
     await this.startViceEmpty();
 
-    // 2. Várakozás a kapcsolatra
+    // 2. Wait for connection
     await this.waitForConnection();
 
-    // 3. Reset küldése (tiszta állapot)
+    // 3. Send reset (clean state)
     await this.viceClient.reset();
 
-    // 4. Program betöltése binary autostart-tal
+    // 4. Load program with binary autostart
     await this.viceClient.autostart(prgFile, false);  // run=false!
 
-    // 5. Entry breakpoint beállítása (ha van)
+    // 5. Set entry breakpoint (if any)
     if (entryPointAddress !== undefined) {
         await this.viceClient.checkpointSet(entryPointAddress, ...);
     }
 
-    // 6. Futás indítása
+    // 6. Start execution
     await this.viceClient.continue();
 }
 
@@ -292,27 +292,27 @@ private async startViceEmpty(): Promise<void> {
     const args = [
         '-binarymonitor',
         '-binarymonitoraddress', `${this.host}:${this.port}`,
-        '+remotemonitor',      // Text monitor kikapcsolása
-        '-autostartprgmode', '1',  // RAM inject mód
+        '+remotemonitor',      // Disable text monitor
+        '-autostartprgmode', '1',  // RAM inject mode
     ];
-    // NEM adjuk meg a PRG fájlt!
+    // Do NOT specify the PRG file!
     this.viceProcess = spawn(this.vicePath, args);
 }
 ```
 
-### 2. ViceClient kiegészítések
+### 2. ViceClient Additions
 
 ```typescript
 // vice-client.ts
 
 async reset(): Promise<void> {
-    // 0xCC - Reset parancs
+    // 0xCC - Reset command
     const body = Buffer.from([0x00]);  // Soft reset
     await this.sendCommand(CommandType.RESET, body);
 }
 
 async autostart(filename: string, run: boolean = true): Promise<void> {
-    // 0xDD - Autostart parancs
+    // 0xDD - Autostart command
     const body = Buffer.alloc(3 + filename.length);
     body.writeUInt8(run ? 0x01 : 0x00, 0);  // Run flag
     body.writeUInt16LE(0, 1);                // File index
@@ -322,38 +322,38 @@ async autostart(filename: string, run: boolean = true): Promise<void> {
 }
 ```
 
-### 3. Event kezelés javítása
+### 3. Event Handling Improvements
 
 ```typescript
 // debug-session.ts
 
 private setupViceEventHandlers(): void {
     this.viceClient.on('stopped', (data: StoppedEventData) => {
-        // PC lekérése a regiszterekből
+        // Get PC from registers
         const registers = await this.viceClient.getRegisters();
 
-        // Source location keresése
+        // Find source location
         const source = this.sourceMapper.getSourceLocation(registers.pc);
 
-        // DAP StoppedEvent küldése
+        // Send DAP StoppedEvent
         this.sendEvent(new StoppedEvent('breakpoint', 1));
     });
 }
 ```
 
-## Hibakeresési tippek
+## Debugging Tips
 
-### VICE output figyelése
+### Monitoring VICE Output
 
 ```bash
-# VICE stdout/stderr átirányítása
+# Redirect VICE stdout/stderr
 x64sc -binarymonitor 2>&1 | tee vice.log
 ```
 
-### Binary protocol debugging
+### Binary Protocol Debugging
 
 ```typescript
-// Minden küldött/fogadott üzenet logolása
+// Log all sent/received messages
 socket.on('data', (data) => {
     console.log('RECV:', data.toString('hex'));
 });
@@ -365,16 +365,16 @@ socket.write = (data) => {
 };
 ```
 
-### Gyakori hibák
+### Common Errors
 
-| Hiba | Ok | Megoldás |
-|------|-----|----------|
-| CMD_FAILURE (0x8f) autostart | VICE már fut/tölt | Reset küldése előtte |
-| Breakpoint nem üt be | PC már túlment | Reset + autostart sorrend |
-| Timeout | VICE lassú indulás | Retry loop növelése |
-| Disconnected | VICE crash/quit | Error handling javítása |
+| Error                   | Cause                    | Solution                      |
+|-------------------------|--------------------------|-------------------------------|
+| CMD_FAILURE (0x8f) autostart | VICE already running/loading | Send reset first           |
+| Breakpoint not hit      | PC already passed        | Reset + autostart order       |
+| Timeout                 | VICE slow startup        | Increase retry loop           |
+| Disconnected            | VICE crash/quit          | Improve error handling        |
 
-## Források
+## Sources
 
 - [VICE Binary Monitor Protocol](https://vice-emu.sourceforge.io/vice_13.html)
 - [VS Code Debug Adapter Protocol](https://microsoft.github.io/debug-adapter-protocol/)
