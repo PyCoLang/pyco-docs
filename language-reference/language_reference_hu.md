@@ -1234,6 +1234,24 @@ def example():
     e.x = 100                    # enemies[3].x = 100
 ```
 
+**addr() alias változóval:**
+
+Ha az `addr()` függvényt alias változóval hívjuk meg, az **alias által mutatott címet** adja vissza - nem az alias változó tárolási címét:
+
+```python
+def example():
+    x: byte = 42              # x a stack-en van
+    a: alias[byte]            # a is a stack-en (2 byte pointer)
+    ptr: word
+
+    alias(a, 0xD020)          # a mostantól 0xD020-ra mutat
+
+    ptr = addr(x)             # → x valódi memóriacíme a stack-en
+    ptr = addr(a)             # → 0xD020 (az alias által mutatott cím!)
+```
+
+Ez a viselkedés összhangban van az alias átlátszó szemantikájával: minden művelet az alias-on keresztül a mutatott dologra vonatkozik.
+
 ### 5.4 Alias használata - átlátszó elérés
 
 Az alias úgy viselkedik, **mintha az eredeti változó lenne**:

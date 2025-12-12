@@ -1234,6 +1234,24 @@ def example():
     e.x = 100                    # enemies[3].x = 100
 ```
 
+**addr() with alias variable:**
+
+When calling `addr()` with an alias variable, it returns **the address pointed to by the alias** - not the storage address of the alias variable itself:
+
+```python
+def example():
+    x: byte = 42              # x is on the stack
+    a: alias[byte]            # a is also on stack (2 byte pointer)
+    ptr: word
+
+    alias(a, 0xD020)          # a now points to 0xD020
+
+    ptr = addr(x)             # → x's actual memory address on stack
+    ptr = addr(a)             # → 0xD020 (the address the alias points to!)
+```
+
+This behavior is consistent with the transparent semantics of alias: every operation through an alias refers to the pointed-to object.
+
 ### 5.4 Using Alias - Transparent Access
 
 The alias behaves **as if it were the original variable**:
