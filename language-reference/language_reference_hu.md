@@ -54,13 +54,12 @@ class Hero(Position):
     def move_right(inc: int):      # self-et NEM kell kitenni!
         self.score += inc          # De a törzsben igen
 
-def create_hero() -> Hero:
-    return Hero()
-
 def main():
     # Változókat az elején kell deklarálni
+    hero: Hero
     i: int
 
+    hero()                         # Objektum inicializálása
     print("Hello world\n")
 ```
 
@@ -302,7 +301,7 @@ Az alapértékek csak **fordítási időben ismert konstans értékek** lehetnek
 | Literálok: `42`, `"szöveg"`, `True` | Függvényhívás: `get_value()`  |
 | NAGYBETŰS konstansok: `MAX_ENEMIES` | Változó: `other_var`          |
 | Konstans kifejezések: `10 + 5`      | Futásidejű kifejezés: `x + 1` |
-| Típuskonstruktor: `Enemy()`         | Paraméter: `param`            |
+|                                     | Paraméter: `param`            |
 
 **Helytelen példa:**
 
@@ -813,6 +812,34 @@ def example():
 - Kevesebb elemet is megadhatsz a tömb méreténél - nincs ellenőrzés!
 - Az értékek a data szegmensből másolódnak be runtime-ban
 
+**Osztály típusú tömbök (laposított byte értékek):**
+
+Osztály típusú tömbök esetén a tuple a property értékeket byte-okként tartalmazza, laposított formában:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+
+class Snake:
+    # 3 Position objektum, mindegyikben x és y property
+    # A tuple tartalmazza: x0, y0, x1, y1, x2, y2 (összesen 6 byte)
+    body: array[Position, 3] = (18, 12, 19, 12, 20, 12)
+
+def main():
+    snake: Snake
+    snake()                 # Inicializálás
+    print(snake.body[0].x)  # 18
+    print(snake.body[0].y)  # 12
+    print(snake.body[1].x)  # 19
+```
+
+**Szabályok osztály típusú tömb tuple-ökhöz:**
+- Minden tuple érték **byte** (0-255), nem osztály példány
+- Az értékek property sorrendben követik egymást: először a 0. elem összes property-je, majd az 1. elemé, stb.
+- Tuple értékek száma = elemszám × osztály mérete byte-ban
+- Ez közvetlen memória layout kontrollt biztosít, hasznos sprite adatokhoz, játék objektumokhoz, stb.
+
 **Összehasonlítás:**
 
 | Szintaxis                     | Jelentés                       | Mikor használd?                |
@@ -1209,7 +1236,7 @@ def example():
 
 ### 5.3 Az addr() függvény
 
-Az `addr()` függvény visszaadja egy változó memóriacímét:
+Az `addr()` függvény visszaadja egy változó, property vagy tömbelem memóriacímét:
 
 ```python
 def example():
@@ -1219,6 +1246,50 @@ def example():
     ptr = addr(enemy)            # enemy memóriacíme
     print(ptr)                   # pl. 2048
 ```
+
+**addr() objektum property-kkel:**
+
+Lekérdezheted egy objektum property-jének címét, akár láncolt hozzáféréssel:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+
+class Enemy:
+    pos: Position
+    hp: byte = 0
+
+    def __init__():
+        self.pos()
+
+def example():
+    enemy: Enemy
+    ptr: alias[byte]
+
+    enemy()
+    enemy.pos.x = 50
+
+    alias(ptr, addr(enemy.pos.x))  # enemy.pos.x címe
+    print(ptr)                      # 50
+
+    # Bármilyen mélységű láncolás működik
+    # addr(obj.a.b.c) érvényes
+```
+
+**addr() tömbelemekkel:**
+
+```python
+def example():
+    arr: array[byte, 10] = [0]
+    ptr: alias[byte]
+
+    arr[5] = 42
+    alias(ptr, addr(arr[5]))       # arr[5] címe
+    print(ptr)                      # 42
+```
+
+**Pointer aritmetika:**
 
 Ez hasznos pointer aritmetikához:
 
@@ -1251,6 +1322,26 @@ def example():
 ```
 
 Ez a viselkedés összhangban van az alias átlátszó szemantikájával: minden művelet az alias-on keresztül a mutatott dologra vonatkozik.
+
+**addr() függvény címe:**
+
+Az `addr()` függvénnyel egy függvény címét is lekérdezhetjük. Ez különösen hasznos IRQ vektorok beállításához:
+
+```python
+@irq
+def raster_handler():
+    vic_irq: byte[0xD019]
+    vic_irq = 0xFF               # IRQ nyugtázása
+
+def main():
+    irq_vector: word[0x0314]     # Kernal IRQ vektor
+
+    __sei__()                    # Megszakítások tiltása
+    irq_vector = addr(raster_handler)  # IRQ handler beállítása
+    __cli__()                    # Megszakítások engedélyezése
+```
+
+> **Megjegyzés:** Ez a funkció elsősorban `@irq` dekorátorral jelölt függvényekkel használatos. Az IRQ kezelésről részletesebben lásd az [Interrupt kezelés](#13-interrupt-kezelés-c64) fejezetet.
 
 ### 5.4 Alias használata - átlátszó elérés
 
@@ -1325,7 +1416,8 @@ Ha már van egy alias változód, azt is átadhatod függvénynek. A fordító a
 
 ```python
 def main():
-    enemy: Enemy = Enemy()
+    enemy: Enemy
+    enemy()                      # Inicializálás
     e_alias: alias[Enemy]
 
     alias(e_alias, addr(enemy))  # e_alias → enemy címe
@@ -1358,13 +1450,15 @@ def main():
 
 ```python
 def create_enemy() -> alias[Enemy]:
-    e: Enemy = Enemy()
+    e: Enemy
+    e()                          # Inicializálás
     e.x = 100
     e.y = 50
     return e                     # e alias-ként adódik vissza
 
 def main():
-    enemy: Enemy = create_enemy()  # Az alias MÁSOLÓDIK enemy-be
+    enemy: Enemy
+    enemy = create_enemy()       # Az alias MÁSOLÓDIK enemy-be
 ```
 
 > ⚠️ **FIGYELEM:** Az alias visszatérési érték **csak az adott statement végéig érvényes!**
@@ -1946,14 +2040,17 @@ class VIC:
 
 Ha az osztály **összes** tulajdonsága memory-mapped, az osztály "mapped-only" lesz, és a fordító extra optimalizációkat alkalmazhat (közvetlen címzés). Lásd: [4.4 Memory-mapped osztályok](#44-memory-mapped-osztályok-hardver-wrapperek)
 
-### 9.3 Konstruktor (__init__)
+### 9.3 Inicializáló (__init__)
 
-Az `__init__` metódus az objektum létrehozásakor fut le:
+Az `__init__` metódus az objektum inicializálásakor fut le. A PyCo-ban az objektumok **közvetlenül a stack-en** tárolódnak (mint a C struktúrák), nem heap-en allokált referenciákként. Ez azt jelenti:
+
+- **Deklaráció** (`pos: Position`) csak memóriát foglal - NEM inicializál!
+- **Inicializálás** (`pos()` vagy `pos(args)`) beállítja az alapértékeket és futtatja az `__init__`-et
 
 ```python
 class Enemy:
-    x: int
-    y: int
+    x: int = 0
+    y: int = 0
     health: byte = 100
 
     def __init__(start_x: int, start_y: int):
@@ -1961,7 +2058,11 @@ class Enemy:
         self.y = start_y
 ```
 
-A tulajdonságok **mindig** inicializálódnak a deklarált alapértékekkel (ha van), majd ezután fut le a konstruktor.
+**Az inicializálás sorrendje `pos()` hívásakor:**
+1. Az osztály-szintű alapértékek beállítódnak (pl. `health = 100`)
+2. Az `__init__` metódus lefut (ha létezik és ha van argumentum)
+
+**Fontos:** Az inicializáló hívás (`pos()`) **NEM kifejezés** - nem szerepelhet értékadás jobb oldalán vagy függvényargumentumként. Ez egy utasítás, ami egy már deklarált objektumon művel.
 
 ### 9.4 Metódusok
 
@@ -2014,10 +2115,42 @@ class Player(Position):
     score: int = 0         # Saját tulajdonság
 
 def main():
-    p: Player = Player()
+    p: Player
+    p()                    # Inicializálás
     p.x = 10               # Örökölt tulajdonság
     p.score = 100          # Saját tulajdonság
 ```
+
+**Tulajdonság elfedés (shadowing):**
+
+Ha a gyermek osztály ugyanolyan nevű tulajdonságot deklarál, mint a szülő, az egy **új, különálló tulajdonság** lesz (elfedés). A szülő tulajdonsága megmarad a memóriában (a szülő metódusai számára), de a gyermek nem éri el név szerint:
+
+```python
+class Parent:
+    x: byte = 10
+
+    def get_x() -> byte:
+        return self.x      # Mindig Parent x-ét használja (offset 0)
+
+class Child(Parent):
+    x: byte = 20           # ÚJ tulajdonság - elfedi a szülő x-ét
+
+    def get_child_x() -> byte:
+        return self.x      # Child x-ét használja (más offset)
+
+def main():
+    c: Child
+    c()
+    print(c.x)             # 20 - Child x-e
+    print(c.get_child_x()) # 20 - Child x-e
+    print(c.get_x())       # 10 - Parent metódusa Parent x-ét látja!
+```
+
+Fontos tudnivalók a tulajdonság elfedésről:
+- A gyermek **más típust** is használhat az elfedett tulajdonsághoz
+- Mindkét tulajdonság inicializálódik az alapértelmezett értékével
+- A szülő metódusai mindig a szülő verzióját látják
+- A szülő tulajdonságának eléréséhez használj getter metódust a szülő osztályban
 
 **Metódusok öröklése:**
 
@@ -2033,7 +2166,8 @@ class Dog(Animal):
         print("Woof!\n")
 
 def main():
-    d: Dog = Dog()
+    d: Dog
+    d()                    # Inicializálás
     d.describe()           # Örökölt metódus - "I am an animal"
     d.speak()              # Saját metódus - "Woof!"
 ```
@@ -2052,8 +2186,10 @@ class Dog(Animal):
         print("Woof!\n")
 
 def main():
-    a: Animal = Animal()
-    d: Dog = Dog()
+    a: Animal
+    d: Dog
+    a()                    # Inicializálás
+    d()                    # Inicializálás
 
     a.speak()              # "..."
     d.speak()              # "Woof!"
@@ -2074,11 +2210,12 @@ class Dog(Animal):
         super.speak()          # Meghívja Animal.speak()-et
 
 def main():
-    d: Dog = Dog()
+    d: Dog
+    d()                        # Inicializálás
     d.speak()                  # "Vau! *hang*"
 ```
 
-A `super` használatának tipikus esete a **konstruktor láncolás**, ahol a gyermek konstruktora meghívja a szülő konstruktorát:
+A `super` használatának tipikus esete az **inicializáló láncolás**, ahol a gyermek inicializálója meghívja a szülő inicializálóját:
 
 ```python
 class Position:
@@ -2093,12 +2230,12 @@ class Player(Position):
     score: int = 0
 
     def __init__(px: int, py: int, initial_score: int):
-        super.__init__(px, py)     # Szülő konstruktor hívása
+        super.__init__(px, py)     # Szülő inicializáló hívása
         self.score = initial_score
 
 def main():
     p: Player
-    p = Player(10, 20, 100)
+    p(10, 20, 100)                     # Inicializálás argumentumokkal
     print(p.x, " ", p.y, " ", p.score)  # "10 20 100"
 ```
 
@@ -2110,44 +2247,195 @@ def main():
 
 > **Megjegyzés:** A PyCo-ban nincs polimorfizmus - a metódushívás fordítási időben dől el a változó típusa alapján, nem futásidőben az objektum tényleges típusa alapján. Ez egyszerűbb és gyorsabb kódot eredményez.
 
-### 9.6 Példányosítás és inicializálás
+### 9.6 Deklaráció és inicializálás
 
-A PyCo-ban az objektumok a stack-en jönnek létre. Ez egy tudatos döntés: a stack-alapú memóriakezelés **automatikus, gyors, és nincs memória-töredezés**. A memória foglalás és felszabadítás "ingyen" van - a függvény belépésekor és kilépésekor automatikusan történik.
-
-Ez azt jelenti, hogy a **memória már a deklarációnál lefoglalódik** - az objektum technikailag már létezik. Az `OsztályNév()` hívás tehát valójában **inicializálás**: beállítja a tulajdonságok alapértékeit és lefuttatja a konstruktort.
+A PyCo-ban az objektumok **közvetlenül a stack-en** tárolódnak (mint a C struktúrák), nem heap-en allokált referenciákként. Ez alapvetően különbözik a Pythontól, és fontos következményei vannak.
 
 > **Megjegyzés:** Ha nagyobb vagy dinamikus méretű memóriaterületre van szükség, a [memory-mapped programozással](#4-memory-mapped-programozás) tetszőleges memóriaterületet kijelölhetsz és kezelhetsz.
 >
 > **Miért nem heap?** A C64 BASIC stringkezelése heap-et használ, és emiatt időnként "garbage collection" fut, ami másodpercekig lefagyaszthatja a gépet míg a memóriát tömöríti. A PyCo stack-alapú megoldása ezt teljesen elkerüli.
 
-**Ha nincs konstruktor** (vagy nincs paramétere), az inicializálás történhet a deklarációval egy sorban:
+#### Deklaráció vs inicializálás
+
+| Osztály típusa | Szintaxis | Mi történik |
+|----------------|-----------|-------------|
+| **Nincs `__init__`** | `pos: Position` | Memória foglalás + **automatikus inicializálás** |
+| **Van `__init__`** | `enemy: Enemy` | Memória foglalás - az objektum UNDEFINED |
+| **Explicit init** | `enemy()` vagy `enemy(100, 50)` | Alapértékek beállítása + `__init__` meghívása |
+
+**Fő szabály:** Az `__init__` metódus megléte határozza meg, hogy kell-e explicit inicializálás:
 
 ```python
+class Position:        # Nincs __init__ - AUTOMATIKUSAN inicializálódik
+    x: byte = 0
+    y: byte = 0
+
+class Enemy:           # Van __init__ - EXPLICIT inicializálás kell
+    x: byte = 0
+    health: byte = 100
+
+    def __init__(start_x: byte):
+        self.x = start_x
+
 def example():
-    pos: Position = Position()       # Deklaráció + inicializálás egyben
-    hero: Hero = Hero()              # OK - nincs paraméter
+    pos: Position       # Automatikusan inicializálva! x=0, y=0 azonnal használható
+    print(pos.x)        # OK - kiírja: 0
+
+    enemy: Enemy        # NINCS inicializálva (Enemy-nek van __init__-je)
+    enemy(50)           # Explicit inicializálás szükséges
 ```
 
-**Ha van konstruktor paraméterekkel**, a deklaráció és inicializálás külön sorban kell legyen:
+#### Inicializálás sorrendje
+
+Amikor `pos()`-t hívod:
+
+1. Az osztály-definícióban megadott **alapértékek** beállítódnak
+2. Az **`__init__` metódus** lefut (ha létezik)
 
 ```python
-def example():
-    enemy: Enemy                     # Deklaráció (memória lefoglalva)
+class Enemy:
+    x: int = 0          # Alapérték
+    y: int = 0          # Alapérték
+    health: byte = 100  # Alapérték
 
-    enemy = Enemy(100, 50)           # Inicializálás a törzsben
+    def __init__(start_x: int, start_y: int):
+        self.x = start_x
+        self.y = start_y
+
+def main():
+    e: Enemy            # 1. lépés: Memória foglalás (definiálatlan értékek)
+    e(50, 75)           # 2. lépés: alapértékek alkalmazása (x=0, y=0, health=100)
+                        # 3. lépés: __init__ lefut (x=50, y=75, health marad 100)
 ```
 
-**Miért?** A deklarációs sorban csak fordítási időben ismert konstans értékek szerepelhetnek (lásd [2.8 Változók](#28-változók)). A paraméteres konstruktor hívás függvényhívás, ami futásidejű művelet - ezért a végrehajtható törzsbe kell kerüljön.
+#### Újrainicializálás
 
-**Használat:**
+Az objektumok bármikor újrainicializálhatók az inicializáló újbóli meghívásával:
+
+```python
+class Counter:
+    value: int = 0
+
+def main():
+    c: Counter
+    c()                 # Első inicializálás: value = 0
+    c.value = 100
+
+    # ... c használata ...
+
+    c()                 # Újrainicializálás: value visszaáll 0-ra
+```
+
+Ha az `__init__`-nek vannak paraméterei, azokat újrainicializáláskor is meg kell adni:
 
 ```python
 def main():
-    hero: Hero = Hero()
+    pos: Position
+    pos(10, 20)         # Első inicializálás
+
+    # ... pos használata ...
+
+    pos(0, 0)           # Újrainicializálás új értékekkel
+```
+
+#### Automatikus inicializálás (osztályok `__init__` nélkül)
+
+Az `__init__` metódus nélküli osztályok **automatikusan inicializálódnak** deklarációkor. Ez csökkenti a boilerplate kódot egyszerű adat-osztályoknál:
+
+```python
+class Point:
+    x: byte = 10
+    y: byte = 20
+    # Nincs __init__ - automatikusan inicializálódik
+
+def main():
+    p: Point            # Automatikusan inicializálva! x=10, y=20
+    print(p.x, p.y)     # OK - kiírja: "10 20"
+
+    p.x = 50            # Értékek módosítása
+    p()                 # Újrainicializálás: visszaáll x=10, y=20-ra
+```
+
+Ez **rekurzívan** működik a beágyazott osztály-property-knél is:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+    # Nincs __init__
+
+class Entity:
+    pos: Position       # Automatikusan inicializálódik (Position-nek nincs __init__-je)
+    id: byte = 1
+    # Nincs __init__
+
+def main():
+    e: Entity           # Automatikusan inicializálva, a beágyazott pos-sal együtt!
+    print(e.pos.x)      # OK - kiírja: 0
+```
+
+**Vegyes eset:** Ha a konténer osztálynak van `__init__`-je, de a beágyazott property-knek nincs:
+
+```python
+class Point:           # Nincs __init__ - automatikus init
+    x: byte = 0
+    y: byte = 0
+
+class Game:            # Van __init__ - explicit hívás kell
+    pos: Point         # Automatikusan inicializálódik amikor Game()-et hívjuk
+    score: word = 0
+
+    def __init__():
+        # A pos már inicializálva van ezen a ponton!
+        self.score = 100
+
+def main():
+    g: Game            # NINCS inicializálva (Game-nek van __init__-je)
+    g()                # Inicializálás - pos auto-init, majd __init__ lefut
+```
+
+> **Tipp:** Ha bizonytalan vagy, nyugodtan hívd meg explicit az inicializálót - biztonságos kétszer inicializálni (csak redundáns).
+
+#### Fontos: Az inicializáló NEM kifejezés
+
+Az inicializáló hívás (`pos()`) egy **utasítás**, nem kifejezés. Nem használható:
+
+```python
+# ❌ TILOS - az inicializáló nem kifejezés
+x = pos()               # HIBA - nincs visszatérési érték!
+foo(enemy())            # HIBA - nem használható argumentumként!
+return hero()           # HIBA - nem returnölhető!
+
+# ✅ HELYES - külön deklaráció és inicializálás
+pos: Position
+pos()
+```
+
+Ez a tervezés egyértelművé teszi, hogy a `pos()` egy **meglévő objektumon művel**, nem pedig létrehoz egyet.
+
+#### Teljes példa
+
+```python
+class Hero:
+    x: int = 0
+    y: int = 0
+    score: int = 0
+
+    def __init__(start_x: int, start_y: int):
+        self.x = start_x
+        self.y = start_y
+
+    def move(dx: int, dy: int):
+        self.x += dx
+        self.y += dy
+
+def main():
+    hero: Hero          # Deklaráció
     points: int
 
-    hero.move(10, 5)
-    points = hero.add_score(10)
+    hero(10, 5)         # Inicializálás
+    hero.move(5, 3)     # Metódus hívás
+    points = hero.score
 ```
 
 ---
@@ -2359,11 +2647,12 @@ def example():
 
 ```python
 def example():
-    pos1: Position = Position()
+    pos1: Position
     pos2: Position
+    pos1()               # Inicializálás
 
     pos1.x = 10
-    pos2 = pos1      # pos2 egy MÁSOLAT!
+    pos2 = pos1          # pos2 egy MÁSOLAT!
     pos2.x = 100
 
     # pos1.x = 10 (változatlan)
@@ -2410,10 +2699,11 @@ def modify_enemy(e: alias[Enemy]):    # alias KÖTELEZŐ!
     e.x = 100        # az EREDETI objektum módosul!
 
 def main():
-    enemy: Enemy = Enemy()
+    enemy: Enemy
+    enemy()              # Inicializálás
     enemy.x = 10
 
-    modify_enemy(enemy)    # Automatikusan alias-ként adódik át
+    modify_enemy(enemy)  # Automatikusan alias-ként adódik át
     # enemy.x = 100 - megváltozott!
 ```
 
@@ -2535,7 +2825,8 @@ class Player:
         return result
 
 def example():
-    p: Player = Player()
+    p: Player
+    p()                  # Inicializálás
     s: string[40]
 
     s = str(p)           # "Hero: 0"
@@ -2720,6 +3011,7 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 
 | Python                            | PyCo                        | Megjegyzés                              |
 | --------------------------------- | --------------------------- | --------------------------------------- |
+| `obj = Class()`                   | `obj: Class` majd `obj()`   | Deklaráció és inicializálás külön       |
 | `def method(self, x):`            | `def method(x: int):`       | `self` **nem kell** a paraméterlistában |
 | `obj2 = obj1` → mindkettő ugyanaz | `obj2 = obj1` → **másolat** | Stack-alapú, nem referencia             |
 | Többszörös öröklődés              | Egyszeres öröklődés         | `class Child(Parent):`                  |
@@ -2781,6 +3073,8 @@ def greet(name="World"):          def greet(name: alias[string]):
     print(f"Hello {name}!")           print("Hello ", name, "!\n")
 
 def main():                       def main():
+    e = Enemy(50)                     e: Enemy           # Deklaráció
+                                      e(50)              # Inicializálás
     x = 10                            x: int = 10
     name = "hello"                    name: string = "hello"
     items = [0] * 100                 items: array[byte, 100] = [0]

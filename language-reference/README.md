@@ -181,7 +181,7 @@ def main():
 | `abs(x)`              | Absolute value                           |
 | `min(a, b)`           | Smaller value                            |
 | `max(a, b)`           | Larger value                             |
-| `addr(var)`           | Memory address of variable               |
+| `addr(x)`             | Memory address of variable, property, array element, or function |
 | `alias(ref, address)` | Set alias to point to address            |
 
 ## Type Conversions

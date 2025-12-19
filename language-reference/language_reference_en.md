@@ -54,13 +54,12 @@ class Hero(Position):
     def move_right(inc: int):      # self is NOT needed!
         self.score += inc          # But in the body it is
 
-def create_hero() -> Hero:
-    return Hero()
-
 def main():
     # Variables must be declared at the beginning
+    hero: Hero
     i: int
 
+    hero()                         # Initialize the object
     print("Hello world\n")
 ```
 
@@ -302,7 +301,7 @@ Default values can only be **compile-time known constant values**:
 | Literals: `42`, `"text"`, `True`    | Function call: `get_value()`  |
 | UPPERCASE constants: `MAX_ENEMIES`  | Variable: `other_var`         |
 | Constant expressions: `10 + 5`      | Runtime expression: `x + 1`   |
-| Type constructor: `Enemy()`         | Parameter: `param`            |
+|                                     | Parameter: `param`            |
 
 **Incorrect example:**
 
@@ -813,6 +812,34 @@ def example():
 - You can specify fewer elements than the array size - no checking!
 - Values are copied from the data segment at runtime
 
+**Class-type arrays (flattened byte values):**
+
+For arrays of class types, the tuple contains flattened property values as bytes:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+
+class Snake:
+    # 3 Position objects, each with x and y properties
+    # Tuple contains: x0, y0, x1, y1, x2, y2 (6 bytes total)
+    body: array[Position, 3] = (18, 12, 19, 12, 20, 12)
+
+def main():
+    snake: Snake
+    snake()                 # Initialize
+    print(snake.body[0].x)  # 18
+    print(snake.body[0].y)  # 12
+    print(snake.body[1].x)  # 19
+```
+
+**Rules for class-type array tuples:**
+- Each tuple value is a **byte** (0-255), not a class instance
+- Values are listed in property order: first all properties of element 0, then element 1, etc.
+- Total tuple values = number of elements × class size in bytes
+- This provides direct memory layout control, useful for sprite data, game objects, etc.
+
 **Comparison:**
 
 | Syntax                     | Meaning                        | When to use?                   |
@@ -1209,7 +1236,7 @@ def example():
 
 ### 5.3 The addr() Function
 
-The `addr()` function returns the memory address of a variable:
+The `addr()` function returns the memory address of a variable, property, or array element:
 
 ```python
 def example():
@@ -1219,6 +1246,50 @@ def example():
     ptr = addr(enemy)            # enemy's memory address
     print(ptr)                   # e.g., 2048
 ```
+
+**addr() with object properties:**
+
+You can get the address of an object's property, including chained access:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+
+class Enemy:
+    pos: Position
+    hp: byte = 0
+
+    def __init__():
+        self.pos()
+
+def example():
+    enemy: Enemy
+    ptr: alias[byte]
+
+    enemy()
+    enemy.pos.x = 50
+
+    alias(ptr, addr(enemy.pos.x))  # Address of enemy.pos.x
+    print(ptr)                      # 50
+
+    # Works with any depth of chaining
+    # addr(obj.a.b.c) is valid
+```
+
+**addr() with array elements:**
+
+```python
+def example():
+    arr: array[byte, 10] = [0]
+    ptr: alias[byte]
+
+    arr[5] = 42
+    alias(ptr, addr(arr[5]))       # Address of arr[5]
+    print(ptr)                      # 42
+```
+
+**Pointer arithmetic:**
 
 This is useful for pointer arithmetic:
 
@@ -1251,6 +1322,26 @@ def example():
 ```
 
 This behavior is consistent with the transparent semantics of alias: every operation through an alias refers to the pointed-to object.
+
+**addr() with function name:**
+
+The `addr()` function can also retrieve the address of a function. This is especially useful for setting up IRQ vectors:
+
+```python
+@irq
+def raster_handler():
+    vic_irq: byte[0xD019]
+    vic_irq = 0xFF               # Acknowledge IRQ
+
+def main():
+    irq_vector: word[0x0314]     # Kernal IRQ vector
+
+    __sei__()                    # Disable interrupts
+    irq_vector = addr(raster_handler)  # Set IRQ handler
+    __cli__()                    # Enable interrupts
+```
+
+> **Note:** This feature is primarily used with functions decorated with `@irq`. For more details about IRQ handling, see the [Interrupt Handling](#13-interrupt-handling-c64) section.
 
 ### 5.4 Using Alias - Transparent Access
 
@@ -1325,7 +1416,8 @@ If you already have an alias variable, you can also pass it to a function. The c
 
 ```python
 def main():
-    enemy: Enemy = Enemy()
+    enemy: Enemy
+    enemy()                      # Initialize the enemy
     e_alias: alias[Enemy]
 
     alias(e_alias, addr(enemy))  # e_alias → enemy's address
@@ -1358,13 +1450,15 @@ def main():
 
 ```python
 def create_enemy() -> alias[Enemy]:
-    e: Enemy = Enemy()
+    e: Enemy
+    e()                          # Initialize
     e.x = 100
     e.y = 50
     return e                     # e is returned as alias
 
 def main():
-    enemy: Enemy = create_enemy()  # The alias is COPIED to enemy
+    enemy: Enemy
+    enemy = create_enemy()       # The alias is COPIED to enemy
 ```
 
 > ⚠️ **WARNING:** The alias return value is **only valid until the end of that statement!**
@@ -1946,14 +2040,17 @@ class VIC:
 
 If **all** properties of a class are memory-mapped, the class becomes "mapped-only", and the compiler can apply extra optimizations (direct addressing). See: [4.4 Memory-mapped Classes](#44-memory-mapped-classes-hardware-wrappers)
 
-### 9.3 Constructor (__init__)
+### 9.3 Initializer (__init__)
 
-The `__init__` method runs when the object is created:
+The `__init__` method is called during object initialization. Unlike Python, PyCo objects are stored **inline on the stack** (like C structs), not as heap-allocated references. This means:
+
+- **Declaration** (`pos: Position`) only allocates memory - does NOT initialize!
+- **Initialization** (`pos()` or `pos(args)`) sets default values and runs `__init__`
 
 ```python
 class Enemy:
-    x: int
-    y: int
+    x: int = 0
+    y: int = 0
     health: byte = 100
 
     def __init__(start_x: int, start_y: int):
@@ -1961,7 +2058,11 @@ class Enemy:
         self.y = start_y
 ```
 
-Properties are **always** initialized with declared default values (if any), then the constructor runs.
+**Initialization order when calling `pos()`:**
+1. Class-level default values are set (e.g., `health = 100`)
+2. `__init__` method runs (if exists and if called with arguments)
+
+**Important:** The initializer call `pos()` is **NOT an expression** - it cannot appear on the right side of an assignment or as a function argument. It's a statement that operates on an already-declared object.
 
 ### 9.4 Methods
 
@@ -2014,10 +2115,42 @@ class Player(Position):
     score: int = 0         # Own property
 
 def main():
-    p: Player = Player()
+    p: Player
+    p()                    # Initialize
     p.x = 10               # Inherited property
     p.score = 100          # Own property
 ```
+
+**Property shadowing:**
+
+If a child class declares a property with the same name as a parent property, it creates a **new, separate property** (shadowing). The parent's property remains in memory (for parent methods to use), but the child cannot access it by name:
+
+```python
+class Parent:
+    x: byte = 10
+
+    def get_x() -> byte:
+        return self.x      # Always uses Parent's x (offset 0)
+
+class Child(Parent):
+    x: byte = 20           # NEW property - shadows parent's x
+
+    def get_child_x() -> byte:
+        return self.x      # Uses Child's x (different offset)
+
+def main():
+    c: Child
+    c()
+    print(c.x)             # 20 - Child's x
+    print(c.get_child_x()) # 20 - Child's x
+    print(c.get_x())       # 10 - Parent method sees Parent's x!
+```
+
+Key points about property shadowing:
+- Child can use a **different type** for the shadowed property
+- Both properties are initialized with their default values
+- Parent methods always access the parent's version
+- To access a parent property from child, use a getter method in the parent class
 
 **Method inheritance:**
 
@@ -2033,7 +2166,8 @@ class Dog(Animal):
         print("Woof!\n")
 
 def main():
-    d: Dog = Dog()
+    d: Dog
+    d()                    # Initialize
     d.describe()           # Inherited method - "I am an animal"
     d.speak()              # Own method - "Woof!"
 ```
@@ -2052,8 +2186,10 @@ class Dog(Animal):
         print("Woof!\n")
 
 def main():
-    a: Animal = Animal()
-    d: Dog = Dog()
+    a: Animal
+    d: Dog
+    a()                    # Initialize
+    d()                    # Initialize
 
     a.speak()              # "..."
     d.speak()              # "Woof!"
@@ -2074,11 +2210,12 @@ class Dog(Animal):
         super.speak()          # Calls Animal.speak()
 
 def main():
-    d: Dog = Dog()
+    d: Dog
+    d()                        # Initialize
     d.speak()                  # "Woof! *sound*"
 ```
 
-A typical use case for `super` is **constructor chaining**, where the child constructor calls the parent constructor:
+A typical use case for `super` is **initializer chaining**, where the child initializer calls the parent initializer:
 
 ```python
 class Position:
@@ -2093,12 +2230,12 @@ class Player(Position):
     score: int = 0
 
     def __init__(px: int, py: int, initial_score: int):
-        super.__init__(px, py)     # Call parent constructor
+        super.__init__(px, py)     # Call parent initializer
         self.score = initial_score
 
 def main():
     p: Player
-    p = Player(10, 20, 100)
+    p(10, 20, 100)                     # Initialize with arguments
     print(p.x, " ", p.y, " ", p.score)  # "10 20 100"
 ```
 
@@ -2110,44 +2247,195 @@ def main():
 
 > **Note:** PyCo has no polymorphism - method calls are decided at compile time based on the variable type, not at runtime based on the object's actual type. This results in simpler and faster code.
 
-### 9.6 Instantiation and Initialization
+### 9.6 Declaration and Initialization
 
-In PyCo, objects are created on the stack. This is a deliberate decision: stack-based memory management is **automatic, fast, and has no memory fragmentation**. Memory allocation and deallocation is "free" - it happens automatically when entering and leaving a function.
-
-This means **memory is allocated at declaration** - the object technically already exists. The `ClassName()` call is therefore actually **initialization**: it sets property default values and runs the constructor.
+In PyCo, objects are stored **inline on the stack** (like C structs), not as heap-allocated references. This is fundamentally different from Python and has important implications.
 
 > **Note:** If larger or dynamic-sized memory area is needed, you can designate and manage any memory area with [memory-mapped programming](#4-memory-mapped-programming).
 >
 > **Why not heap?** C64 BASIC string handling uses heap, and because of this, "garbage collection" runs periodically, which can freeze the machine for seconds while compacting memory. PyCo's stack-based solution completely avoids this.
 
-**If there's no constructor** (or no parameters), initialization can be on the same line as declaration:
+#### Declaration vs Initialization
+
+| Class type | Syntax | What happens |
+|------------|--------|--------------|
+| **No `__init__`** | `pos: Position` | Memory allocated + **automatically initialized** |
+| **Has `__init__`** | `enemy: Enemy` | Memory allocated - object is UNDEFINED |
+| **Explicit init** | `enemy()` or `enemy(100, 50)` | Default values set + `__init__` called |
+
+**Key rule:** The presence of `__init__` determines whether explicit initialization is needed:
 
 ```python
+class Position:        # No __init__ - will be AUTO-INITIALIZED
+    x: byte = 0
+    y: byte = 0
+
+class Enemy:           # Has __init__ - requires EXPLICIT initialization
+    x: byte = 0
+    health: byte = 100
+
+    def __init__(start_x: byte):
+        self.x = start_x
+
 def example():
-    pos: Position = Position()       # Declaration + initialization together
-    hero: Hero = Hero()              # OK - no parameters
+    pos: Position       # Auto-initialized! x=0, y=0 immediately usable
+    print(pos.x)        # OK - prints 0
+
+    enemy: Enemy        # NOT initialized (Enemy has __init__)
+    enemy(50)           # Explicit initialization required
 ```
 
-**If there's a constructor with parameters**, declaration and initialization must be on separate lines:
+#### Initialization Order
+
+When you call `pos()`:
+
+1. **Default values** from class definition are applied
+2. **`__init__` method** runs (if exists)
 
 ```python
-def example():
-    enemy: Enemy                     # Declaration (memory allocated)
+class Enemy:
+    x: int = 0          # Default value
+    y: int = 0          # Default value
+    health: byte = 100  # Default value
 
-    enemy = Enemy(100, 50)           # Initialization in body
+    def __init__(start_x: int, start_y: int):
+        self.x = start_x
+        self.y = start_y
+
+def main():
+    e: Enemy            # Step 1: Memory allocated (undefined values)
+    e(50, 75)           # Step 2: defaults applied (x=0, y=0, health=100)
+                        # Step 3: __init__ runs (x=50, y=75, health stays 100)
 ```
 
-**Why?** Only compile-time known constant values can appear in the declaration line (see [2.8 Variables](#28-variables)). A parameterized constructor call is a function call, which is a runtime operation - so it must go in the executable body.
+#### Re-initialization
 
-**Usage:**
+Objects can be re-initialized at any time by calling the initializer again:
+
+```python
+class Counter:
+    value: int = 0
+
+def main():
+    c: Counter
+    c()                 # First initialization: value = 0
+    c.value = 100
+
+    # ... use c ...
+
+    c()                 # Re-initialize: value resets to 0
+```
+
+If `__init__` has parameters, they must be provided when re-initializing:
 
 ```python
 def main():
-    hero: Hero = Hero()
+    pos: Position
+    pos(10, 20)         # First initialization
+
+    # ... use pos ...
+
+    pos(0, 0)           # Re-initialize with new values
+```
+
+#### Automatic Initialization (Classes Without `__init__`)
+
+Classes without `__init__` are **automatically initialized** when declared. This reduces boilerplate for simple data classes:
+
+```python
+class Point:
+    x: byte = 10
+    y: byte = 20
+    # No __init__ - auto-initialized
+
+def main():
+    p: Point            # Automatically initialized! x=10, y=20
+    print(p.x, p.y)     # OK - prints "10 20"
+
+    p.x = 50            # Modify values
+    p()                 # Re-initialize: resets to x=10, y=20
+```
+
+This also works recursively for **nested class properties**:
+
+```python
+class Position:
+    x: byte = 0
+    y: byte = 0
+    # No __init__
+
+class Entity:
+    pos: Position       # Will be auto-initialized (Position has no __init__)
+    id: byte = 1
+    # No __init__
+
+def main():
+    e: Entity           # Auto-initialized, including nested pos!
+    print(e.pos.x)      # OK - prints 0
+```
+
+**Mixed scenario:** If the container class has `__init__` but nested properties don't:
+
+```python
+class Point:           # No __init__ - auto-initialized
+    x: byte = 0
+    y: byte = 0
+
+class Game:            # Has __init__ - explicit call needed
+    pos: Point         # Will be auto-initialized when Game() is called
+    score: word = 0
+
+    def __init__():
+        # pos is already initialized at this point!
+        self.score = 100
+
+def main():
+    g: Game            # NOT initialized (Game has __init__)
+    g()                # Initialize - pos auto-inits, then __init__ runs
+```
+
+> **Tip:** If you're unsure, you can always call the initializer explicitly - it's safe to initialize twice (just redundant).
+
+#### Important: Initializer is NOT an Expression
+
+The initializer call `pos()` is a **statement**, not an expression. It cannot be used:
+
+```python
+# ❌ FORBIDDEN - initializer is not an expression
+x = pos()               # ERROR - no return value!
+foo(enemy())            # ERROR - cannot use as argument!
+return hero()           # ERROR - cannot return!
+
+# ✅ CORRECT - separate declaration and initialization
+pos: Position
+pos()
+```
+
+This design makes it clear that `pos()` **operates on** an existing object rather than **creating** one.
+
+#### Complete Example
+
+```python
+class Hero:
+    x: int = 0
+    y: int = 0
+    score: int = 0
+
+    def __init__(start_x: int, start_y: int):
+        self.x = start_x
+        self.y = start_y
+
+    def move(dx: int, dy: int):
+        self.x += dx
+        self.y += dy
+
+def main():
+    hero: Hero          # Declaration
     points: int
 
-    hero.move(10, 5)
-    points = hero.add_score(10)
+    hero(10, 5)         # Initialization
+    hero.move(5, 3)     # Method call
+    points = hero.score
 ```
 
 ---
@@ -2359,11 +2647,12 @@ def example():
 
 ```python
 def example():
-    pos1: Position = Position()
+    pos1: Position
     pos2: Position
+    pos1()               # Initialize pos1
 
     pos1.x = 10
-    pos2 = pos1      # pos2 is a COPY!
+    pos2 = pos1          # pos2 is a COPY!
     pos2.x = 100
 
     # pos1.x = 10 (unchanged)
@@ -2410,10 +2699,11 @@ def modify_enemy(e: alias[Enemy]):    # alias REQUIRED!
     e.x = 100        # ORIGINAL object is modified!
 
 def main():
-    enemy: Enemy = Enemy()
+    enemy: Enemy
+    enemy()              # Initialize
     enemy.x = 10
 
-    modify_enemy(enemy)    # Automatically passed as alias
+    modify_enemy(enemy)  # Automatically passed as alias
     # enemy.x = 100 - changed!
 ```
 
@@ -2535,7 +2825,8 @@ class Player:
         return result
 
 def example():
-    p: Player = Player()
+    p: Player
+    p()                  # Initialize
     s: string[40]
 
     s = str(p)           # "Hero: 0"
@@ -2720,6 +3011,7 @@ This summary contains the most important differences between Python and PyCo.
 
 | Python                            | PyCo                        | Note                                    |
 | --------------------------------- | --------------------------- | --------------------------------------- |
+| `obj = Class()`                   | `obj: Class` then `obj()`   | Declaration and initialization separate |
 | `def method(self, x):`            | `def method(x: int):`       | `self` **not needed** in parameter list |
 | `obj2 = obj1` → both same         | `obj2 = obj1` → **copy**    | Stack-based, not reference              |
 | Multiple inheritance              | Single inheritance          | `class Child(Parent):`                  |
@@ -2781,6 +3073,8 @@ def greet(name="World"):          def greet(name: alias[string]):
     print(f"Hello {name}!")           print("Hello ", name, "!\n")
 
 def main():                       def main():
+    e = Enemy(50)                     e: Enemy           # Declaration
+                                      e(50)              # Initialization
     x = 10                            x: int = 10
     name = "hello"                    name: string = "hello"
     items = [0] * 100                 items: array[byte, 100] = [0]
