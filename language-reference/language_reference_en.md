@@ -1181,6 +1181,134 @@ def main():
 
 > **Tip:** Mapped-only classes are ideal for typed access to hardware registers. With methods, you can implement complex hardware operations in a clear way.
 
+### 4.5 IRQ-safe Variables (irq_safe)
+
+The `irq_safe` is a wrapper type that provides **atomic access** to memory-mapped variables. This is critical for variables that are used by both the main program and IRQ handlers.
+
+#### The Problem
+
+Reading and writing multi-byte types (word, int) requires **multiple machine instructions**. If an interrupt (IRQ) occurs midway through the operation, a "torn read/write" happens - the IRQ handler sees a partially updated, inconsistent value.
+
+```python
+# DANGEROUS - IRQ can interrupt!
+SHARED_ADDR = 0x0080  # Platform-dependent address
+
+@singleton
+class State:
+    counter: word[SHARED_ADDR]    # 2 bytes = 2 instructions
+
+def main():
+    State.counter = 12345
+    # ↑ If IRQ interrupts between the two byte writes,
+    #   the IRQ handler may read a corrupted value!
+```
+
+#### Solution: irq_safe wrapper
+
+The `irq_safe` wrapper automatically disables IRQ during the operation:
+
+```python
+irq_safe[type[address]]
+```
+
+```python
+SHARED_ADDR = 0x0080
+
+@singleton
+class State:
+    counter: irq_safe[word[SHARED_ADDR]]    # Atomic access
+
+def main():
+    State.counter = 12345    # Protected: IRQ cannot interrupt
+```
+
+#### How It Works
+
+The compiler generates protection code for `irq_safe` variable access:
+
+1. **Saves** the current interrupt flag state
+2. **Disables** IRQ
+3. **Performs** the read or write operation
+4. **Restores** the original interrupt flag state
+
+> **Why not simple SEI/CLI?** If the user already disabled IRQ (`__sei__()`), CLI would accidentally re-enable it. Restoring the original state preserves the user's intent.
+
+#### Usage in IRQ Handlers
+
+Inside IRQ handlers (`@irq`, `@irq_raw`), the protection is **automatically skipped** because:
+
+1. The CPU automatically disables IRQ when entering the handler
+2. Additional protection would be unnecessary overhead
+
+```python
+SHARED_ADDR = 0x0080
+
+@singleton
+class Game:
+    score: irq_safe[word[SHARED_ADDR]]
+
+@irq
+def timer_irq():
+    # No protection generated here - already in IRQ context
+    if Game.score > 0:
+        Game.score = Game.score - 1
+
+def main():
+    # Protection is generated here
+    print(Game.score)    # Atomic read
+```
+
+#### Supported Types
+
+The `irq_safe` wrapper can be used with the following memory-mapped types:
+
+| Type   | Description                                  |
+| ------ | -------------------------------------------- |
+| byte   | 1 byte (protection for consistency)          |
+| sbyte  | 1 byte signed                                |
+| word   | 2 bytes - **critical**, requires 2 instructions |
+| int    | 2 bytes signed - **critical**                |
+
+> **Note:** For the `byte` type, protection is technically not necessary (single instruction), but the compiler still generates it for consistency and future-proofing.
+
+#### When to Use?
+
+| Situation                                         | Use irq_safe?         |
+| ------------------------------------------------- | --------------------- |
+| Variable used only in main program                | Not required          |
+| Variable used only in IRQ handler                 | Not required          |
+| Variable used in both places (read/write)         | **Yes!**              |
+| Multi-byte type (word, int) with shared access    | **Absolutely!**       |
+
+#### Example: Shared Counter
+
+```python
+# Platform-specific addresses (see compiler reference)
+COUNTER_ADDR = 0x0080
+
+@singleton
+class SharedState:
+    counter: irq_safe[word[COUNTER_ADDR]]
+    flag: irq_safe[byte[COUNTER_ADDR + 2]]
+
+@irq
+def timer_handler():
+    # IRQ context - no protection needed
+    SharedState.counter = SharedState.counter + 1
+
+def main():
+    SharedState.counter = 0
+    SharedState.flag = 1
+
+    # ... program logic ...
+
+    # Safe read - atomic
+    if SharedState.counter > 1000:
+        SharedState.flag = 0
+```
+
+> **Platform-specific details:** Specific memory addresses, IRQ vector setup, and generated assembly code depend on the target platform. See the compiler reference for your platform (e.g., C64, Plus/4, etc.).
+
 ---
 
 ## 5. Alias and References
@@ -1325,7 +1453,7 @@ This behavior is consistent with the transparent semantics of alias: every opera
 
 **addr() with function name:**
 
-The `addr()` function can also retrieve the address of a function. This is especially useful for setting up IRQ vectors:
+The `addr()` function can also retrieve the address of a function. This is useful for IRQ vector setup:
 
 ```python
 @irq
@@ -1341,7 +1469,27 @@ def main():
     __cli__()                    # Enable interrupts
 ```
 
-> **Note:** This feature is primarily used with functions decorated with `@irq`. For more details about IRQ handling, see the [Interrupt Handling](#13-interrupt-handling-c64) section.
+**Recommended: `__set_irq__()` intrinsic:**
+
+The preferred way to set up IRQ handlers is the `__set_irq__()` intrinsic, which automatically handles SEI/CLI and selects the correct vector based on the decorator:
+
+```python
+@irq_hook
+def frame_counter():
+    count: byte[0x02F0]
+    count = count + 1
+
+def main():
+    __set_irq__(frame_counter)   # Automatically sets $0314/$0315 for @irq_hook
+```
+
+| Decorator   | Vector set by `__set_irq__()` |
+| ----------- | ----------------------------- |
+| `@irq`      | $FFFE/$FFFF (hardware)        |
+| `@irq_raw`  | $FFFE/$FFFF (hardware)        |
+| `@irq_hook` | $0314/$0315 (Kernal software) |
+
+> **Note:** For more details about IRQ handling, see the [Interrupt Handling](#13-interrupt-handling-c64) section.
 
 ### 5.4 Using Alias - Transparent Access
 
@@ -1768,6 +1916,46 @@ def example():
 
 > **IMPORTANT:** The loop variable must be declared in advance! In PyCo, variables live at function level.
 
+##### Throwaway Loop Variable
+
+When you don't need the loop counter value, use `_` as the loop variable:
+
+```python
+def example():
+    for _ in range(10):
+        print("hello")     # prints 10 times, counter not used
+```
+
+This has several advantages:
+- **No declaration needed** - `_` doesn't require a variable declaration
+- **Optimized code** - uses the 6502 hardware stack for ~25% faster loop overhead
+- **Clearer intent** - signals that the counter value is irrelevant
+
+| Form                      | Counter Type | Description                          |
+| ------------------------- | ------------ | ------------------------------------ |
+| `for _ in range(n)`       | byte         | When `n ≤ 255`                       |
+| `for _ in range(n)`       | word         | When `n > 255`                       |
+| `for _ in range(var)`     | from `var`   | Determined by variable type          |
+
+**Restrictions:**
+- **Only `range(n)` form is supported** - use a named variable for `range(start, end)` or `range(start, end, step)`
+- `_` cannot be used inside the loop body - compile-time error
+- `_` cannot be declared as a variable name
+- `_` cannot appear in any expression
+
+```python
+# INCORRECT - using _ in body
+for _ in range(10):
+    x = _              # COMPILE ERROR!
+
+# INCORRECT - declaring _
+_: byte = 0            # COMPILE ERROR!
+
+# INCORRECT - range with start/end (use named variable instead)
+for _ in range(5, 10):    # COMPILE ERROR!
+    pass
+```
+
 #### break and continue
 
 `break` exits the loop:
@@ -1876,10 +2064,14 @@ def main():
 
 Decorators depend on the target platform. For example, the C64 backend supports the following decorators:
 
-| Decorator     | Effect (C64)                                      |
-| ------------- | ------------------------------------------------- |
-| `@lowercase`  | Lowercase character set mode (main fn. only)      |
-| `@standalone` | Disable BASIC ROM (+8KB RAM) (main fn. only)      |
+| Decorator     | Effect (C64)                                           |
+| ------------- | ------------------------------------------------------ |
+| `@lowercase`  | Lowercase character set mode (main fn. only)           |
+| `@kernal`     | Keep Kernal ROM enabled (main fn. only)                |
+| `@noreturn`   | Skip BASIC cleanup - program never exits (main only)   |
+| `@irq`        | Mark function as IRQ handler (chains to system IRQ)    |
+| `@irq_raw`    | Mark function as raw IRQ handler (direct rti)          |
+| `@irq_hook`   | Lightweight Kernal IRQ hook (no prologue, rts return)  |
 
 > **Note:** For detailed decorator descriptions, see the target platform compiler reference (e.g., `c64_compiler_reference.md`).
 
@@ -2438,6 +2630,77 @@ def main():
     points = hero.score
 ```
 
+### 9.7 Singleton Classes
+
+The `@singleton` decorator creates a class with exactly **one instance** that exists for the entire program lifetime. This is ideal for hardware wrappers (VIC, SID, Screen) and global state objects.
+
+```python
+@singleton
+class Screen:
+    border: byte[0xD020]
+    bg: byte[0xD021]
+
+    def set_colors(b: byte, c: byte):
+        self.border = b
+        self.bg = c
+
+    def clear():
+        # ... screen clearing logic ...
+```
+
+#### Usage
+
+Singleton classes can be accessed in two ways:
+
+**1. Direct class call (recommended for hardware wrappers):**
+```python
+def main():
+    Screen.set_colors(1, 0)   # Direct call via class name
+    Screen.clear()
+```
+
+**2. Local alias (like regular classes):**
+```python
+def main():
+    scr: Screen               # Creates an alias to the singleton
+    scr.set_colors(1, 0)      # Access via alias
+```
+
+Both methods access the **same instance** - changes made via one are visible through the other.
+
+#### Behavior
+
+| Aspect                | Singleton behavior                                    |
+| --------------------- | ----------------------------------------------------- |
+| Instance count        | Exactly one, created before `main()`                  |
+| Property defaults     | Applied automatically at program start                |
+| `__init__` method     | NOT called automatically - call explicitly if needed  |
+| Memory location       | After `__program_end` (mapped-only: no extra memory)  |
+| Local declaration     | `scr: Screen` creates an alias, not a new instance    |
+
+#### When to use `@singleton`
+
+✅ **Good use cases:**
+- Hardware wrappers (VIC, SID, CIA registers)
+- Global game state (score, level, lives)
+- Resource managers (sprite pool, sound effects)
+
+❌ **Not suitable for:**
+- Classes where you need multiple instances
+- Data containers that should be passed around
+
+#### Mapped-only Singletons
+
+If **all properties** of a singleton are memory-mapped, no additional memory is allocated:
+
+```python
+@singleton
+class VIC:
+    border: byte[0xD020]      # All properties are mapped
+    bg: byte[0xD021]
+    # No stack/BSS memory used - just method access to fixed addresses
+```
+
 ---
 
 ## 10. Type Conversions and Type Handling
@@ -2904,6 +3167,66 @@ min(a, b) -> type of a and b
 max(a, b) -> type of a and b
 ```
 
+### blkcpy
+
+Block (rectangle) memory copy. Copies a rectangular region from one array to another.
+
+**7-parameter syntax (common stride):**
+
+```python
+blkcpy(src_arr, src_offset, dst_arr, dst_offset, width, height, stride)
+```
+
+**8-parameter syntax (separate strides):**
+
+```python
+blkcpy(src_arr, src_offset, src_stride, dst_arr, dst_offset, dst_stride, width, height)
+```
+
+**Parameters:**
+
+| Parameter    | Type  | Description                               |
+| ------------ | ----- | ----------------------------------------- |
+| `src_arr`    | array | Source array                              |
+| `src_offset` | word  | Starting offset in source (bytes)         |
+| `src_stride` | byte  | Source row width (8-param only)           |
+| `dst_arr`    | array | Destination array                         |
+| `dst_offset` | word  | Starting offset in destination (bytes)    |
+| `dst_stride` | byte  | Destination row width (8-param only)      |
+| `width`      | byte  | Rectangle width (bytes, max 255)          |
+| `height`     | byte  | Rectangle height (rows, max 255)          |
+| `stride`     | byte  | Common row width (7-param only)           |
+
+**Use cases:**
+
+```python
+screen: array[byte, 1000][0x0400]
+buffer: array[byte, 1000][0x8000]
+tile: array[byte, 16][0xC000]  # 4x4 tile
+
+# Scroll left by 1 character
+blkcpy(screen, 1, screen, 0, 39, 25, 40)
+
+# Scroll up by 1 row
+blkcpy(screen, 40, screen, 0, 40, 24, 40)
+
+# Double buffer - copy 20x10 region
+blkcpy(buffer, 5*40+10, screen, 5*40+10, 20, 10, 40)
+
+# Tile blit - 4x4 tile with different strides
+blkcpy(tile, 0, 4, screen, 5*40+10, 40, 4, 4)
+```
+
+**Automatic direction detection:**
+
+For overlapping regions (same array), the compiler automatically selects the correct copy direction:
+
+| Case                              | Direction | Determined at  |
+| --------------------------------- | --------- | -------------- |
+| Different arrays                  | Forward   | Compile-time   |
+| Same array, both offsets constant | Correct   | Compile-time   |
+| Same array, variable offset       | Correct   | Runtime        |
+
 ---
 
 ## 13. Special Features
@@ -3039,19 +3362,20 @@ This summary contains the most important differences between Python and PyCo.
 
 #### Control Structures
 
-| Python                | PyCo                    | Note                              |
-| --------------------- | ----------------------- | --------------------------------- |
-| `for i in range(10):` | `for i in range(10):`   | ✅ Same                            |
-| `for item in list:`   | ❌ No foreach            | Only index-based iteration        |
-| `try/except`          | ❌ No exception handling | Error handling is programmer's job |
-| `with`                | ❌ No context manager    |                                   |
+| Python                  | PyCo                    | Note                               |
+| ----------------------- | ----------------------- | ---------------------------------- |
+| `for i in range(10):`   | `for i in range(10):`   | ✅ Same                             |
+| `for _ in range(10):`   | `for _ in range(10):`   | ✅ Same - optimized with HW stack   |
+| `for item in list:`     | ❌ No foreach            | Only index-based iteration         |
+| `try/except`            | ❌ No exception handling | Error handling is programmer's job |
+| `with`                  | ❌ No context manager    |                                    |
 
 #### Unsupported Python Features
 
 - ❌ `list`, `dict`, `set` (dynamic collections)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (except built-in: `@lowercase`, `@standalone`)
+- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`)
 - ❌ `async`/`await`
 - ❌ `import` (partially supported)
 - ❌ Multi-line string (`"""..."""`)

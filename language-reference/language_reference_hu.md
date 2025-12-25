@@ -1181,6 +1181,134 @@ def main():
 
 > **Tipp:** Mapped-only osztályok ideálisak hardver regiszterek típusos eléréséhez. A metódusok segítségével komplex hardver műveleteket is áttekinthetően implementálhatsz.
 
+### 4.5 IRQ-biztos változók (irq_safe)
+
+Az `irq_safe` egy wrapper típus, ami **atomi hozzáférést** biztosít memory-mapped változókhoz. Ez kritikus fontosságú olyan változóknál, amelyeket mind a főprogram, mind az IRQ handler használ.
+
+#### A probléma
+
+A többbájtos típusok (word, int) olvasása és írása **több gépi utasítást** igényel. Ha egy megszakítás (IRQ) félbeszakítja a műveletet, "torn read/write" (szakadt olvasás/írás) történik - az IRQ handler félig frissített, inkonzisztens értéket lát.
+
+```python
+# VESZÉLYES - IRQ félbeszakíthatja!
+SHARED_ADDR = 0x0080  # Platform-függő cím
+
+@singleton
+class State:
+    counter: word[SHARED_ADDR]    # 2 bájt = 2 utasítás
+
+def main():
+    State.counter = 12345
+    # ↑ Ha IRQ pont a két bájt írása között szakítja meg,
+    #   az IRQ handler hibás értéket olvashat!
+```
+
+#### Megoldás: irq_safe wrapper
+
+Az `irq_safe` wrapper automatikusan letiltja az IRQ-t a művelet idejére:
+
+```python
+irq_safe[típus[cím]]
+```
+
+```python
+SHARED_ADDR = 0x0080
+
+@singleton
+class State:
+    counter: irq_safe[word[SHARED_ADDR]]    # Atomi hozzáférés
+
+def main():
+    State.counter = 12345    # Védett: IRQ nem szakíthatja félbe
+```
+
+#### Működési elv
+
+A fordító az `irq_safe` változók elérésekor:
+
+1. **Elmenti** az aktuális interrupt flag állapotot
+2. **Letiltja** az IRQ-t
+3. **Végrehajtja** az olvasást vagy írást
+4. **Visszaállítja** az eredeti interrupt flag állapotot
+
+> **Miért nem egyszerű SEI/CLI?** Ha a felhasználó már korábban letiltotta az IRQ-t (`__sei__()`), a CLI véletlenül újra engedélyezné. Az eredeti állapot visszaállítása megőrzi a user szándékát.
+
+#### Használat IRQ handlerben
+
+Az IRQ handleren belül (`@irq`, `@irq_raw`) a védelem **automatikusan kimarad**, mivel:
+
+1. A CPU automatikusan letiltja az IRQ-t amikor belép a handlerbe
+2. További tiltás felesleges overhead lenne
+
+```python
+SHARED_ADDR = 0x0080
+
+@singleton
+class Game:
+    score: irq_safe[word[SHARED_ADDR]]
+
+@irq
+def timer_irq():
+    # Itt NEM generálódik védelem - már IRQ kontextusban vagyunk
+    if Game.score > 0:
+        Game.score = Game.score - 1
+
+def main():
+    # Itt generálódik a védelem
+    print(Game.score)    # Atomi olvasás
+```
+
+#### Támogatott típusok
+
+Az `irq_safe` wrapper az alábbi memory-mapped típusokkal használható:
+
+| Típus  | Leírás                                       |
+| ------ | -------------------------------------------- |
+| byte   | 1 bájt (védelem konzisztencia miatt)         |
+| sbyte  | 1 bájt előjeles                              |
+| word   | 2 bájt - **kritikus**, 2 utasítás szükséges  |
+| int    | 2 bájt előjeles - **kritikus**               |
+
+> **Megjegyzés:** A `byte` típusnál a védelem technikailag nem szükséges (egyetlen utasítás), de a konzisztencia és jövőbiztonság érdekében a fordító mégis generálja.
+
+#### Mikor használd?
+
+| Helyzet                                           | Használj irq_safe-et? |
+| ------------------------------------------------- | --------------------- |
+| Változó csak főprogramban használt                | Nem szükséges         |
+| Változó csak IRQ handlerben használt              | Nem szükséges         |
+| Változó mindkét helyen használt (olvasás/írás)    | **Igen!**             |
+| Többbájtos típus (word, int) megosztott használat | **Feltétlenül!**      |
+
+#### Példa: Megosztott számláló
+
+```python
+# Platform-specifikus címek (lásd a compiler referenciát)
+COUNTER_ADDR = 0x0080
+
+@singleton
+class SharedState:
+    counter: irq_safe[word[COUNTER_ADDR]]
+    flag: irq_safe[byte[COUNTER_ADDR + 2]]
+
+@irq
+def timer_handler():
+    # IRQ kontextus - védelem nélkül
+    SharedState.counter = SharedState.counter + 1
+
+def main():
+    SharedState.counter = 0
+    SharedState.flag = 1
+
+    # ... program logika ...
+
+    # Biztonságos olvasás - atomi
+    if SharedState.counter > 1000:
+        SharedState.flag = 0
+```
+
+> **Platform-specifikus részletek:** A konkrét memóriacímek, IRQ vector beállítás és a generált assembly kód a target platformtól függ. Lásd az adott platform compiler referenciáját (pl. C64, Plus/4, stb.).
+
 ---
 
 ## 5. Alias és referenciák
@@ -1876,10 +2004,13 @@ def main():
 
 A dekorátorok a célplatformtól függenek. Például a C64 backend a következő dekorátorokat támogatja:
 
-| Dekorátor     | Hatás (C64)                                       |
-| ------------- | ------------------------------------------------- |
-| `@lowercase`  | Kisbetűs karakterkészlet mód (csak main fv.)      |
-| `@standalone` | BASIC ROM kikapcsolása (+8KB RAM) (csak main fv.) |
+| Dekorátor     | Hatás (C64)                                                |
+| ------------- | ---------------------------------------------------------- |
+| `@lowercase`  | Kisbetűs karakterkészlet mód (csak main fv.)               |
+| `@kernal`     | Kernal ROM engedélyezése (csak main fv.)                   |
+| `@noreturn`   | BASIC cleanup kihagyása - program soha nem lép ki (main)   |
+| `@irq`        | IRQ handler jelölés (rendszer IRQ-hoz láncolódik)          |
+| `@irq_raw`    | Nyers IRQ handler (közvetlen rti)                          |
 
 > **Megjegyzés:** A dekorátorok részletes leírását lásd a célplatform fordító referenciájában (pl. `c64_compiler_reference.md`).
 
@@ -2438,6 +2569,77 @@ def main():
     points = hero.score
 ```
 
+### 9.7 Singleton osztályok
+
+A `@singleton` dekorátor olyan osztályt hoz létre, amelyből **pontosan egy példány** létezik a program teljes futása alatt. Ideális hardver wrapperekhez (VIC, SID, Screen) és globális állapot objektumokhoz.
+
+```python
+@singleton
+class Screen:
+    border: byte[0xD020]
+    bg: byte[0xD021]
+
+    def set_colors(b: byte, c: byte):
+        self.border = b
+        self.bg = c
+
+    def clear():
+        # ... képernyő törlés logika ...
+```
+
+#### Használat
+
+A singleton osztályok kétféleképpen érhetők el:
+
+**1. Közvetlen osztály hívás (ajánlott hardver wrapperekhez):**
+```python
+def main():
+    Screen.set_colors(1, 0)   # Közvetlen hívás az osztály nevével
+    Screen.clear()
+```
+
+**2. Lokális alias (mint a normál osztályoknál):**
+```python
+def main():
+    scr: Screen               # Alias létrehozása a singletonhoz
+    scr.set_colors(1, 0)      # Hozzáférés az aliason keresztül
+```
+
+Mindkét módszer **ugyanazt a példányt** éri el - az egyiken keresztül végzett változtatások a másikon keresztül is láthatók.
+
+#### Viselkedés
+
+| Szempont              | Singleton viselkedés                                      |
+| --------------------- | --------------------------------------------------------- |
+| Példányszám           | Pontosan egy, a `main()` előtt létrehozva                 |
+| Property alapértékek  | Automatikusan alkalmazva program induláskor               |
+| `__init__` metódus    | NEM hívódik automatikusan - explicit hívás szükséges      |
+| Memória hely          | `__program_end` után (mapped-only: nincs extra memória)   |
+| Lokális deklaráció    | `scr: Screen` alias-t hoz létre, nem új példányt          |
+
+#### Mikor használjunk `@singleton`-t
+
+✅ **Jó felhasználási esetek:**
+- Hardver wrapperek (VIC, SID, CIA regiszterek)
+- Globális játék állapot (pontszám, szint, életek)
+- Erőforrás kezelők (sprite pool, hangeffektusok)
+
+❌ **Nem alkalmas:**
+- Osztályok, ahol több példányra van szükség
+- Adat konténerek, amiket át kell adni
+
+#### Mapped-only singletonok
+
+Ha a singleton **összes property-je** memória-mapped, nem foglalódik extra memória:
+
+```python
+@singleton
+class VIC:
+    border: byte[0xD020]      # Minden property mapped
+    bg: byte[0xD021]
+    # Nincs stack/BSS memória használat - csak metódus hozzáférés fix címekhez
+```
+
 ---
 
 ## 10. Típuskonverziók és típuskezelés
@@ -2904,6 +3106,66 @@ min(a, b) -> a és b típusa
 max(a, b) -> a és b típusa
 ```
 
+### blkcpy
+
+Téglalap (block) memóriamásolás. Téglalap alakú régiót másol egyik tömbből a másikba.
+
+**7 paraméteres szintaxis (közös stride):**
+
+```python
+blkcpy(src_arr, src_offset, dst_arr, dst_offset, width, height, stride)
+```
+
+**8 paraméteres szintaxis (külön stride-ok):**
+
+```python
+blkcpy(src_arr, src_offset, src_stride, dst_arr, dst_offset, dst_stride, width, height)
+```
+
+**Paraméterek:**
+
+| Paraméter    | Típus | Leírás                                        |
+| ------------ | ----- | --------------------------------------------- |
+| `src_arr`    | array | Forrás tömb                                   |
+| `src_offset` | word  | Kezdő offset a forrásban (byte)               |
+| `src_stride` | byte  | Forrás sor szélessége (csak 8-param)          |
+| `dst_arr`    | array | Cél tömb                                      |
+| `dst_offset` | word  | Kezdő offset a célban (byte)                  |
+| `dst_stride` | byte  | Cél sor szélessége (csak 8-param)             |
+| `width`      | byte  | Téglalap szélessége (byte, max 255)           |
+| `height`     | byte  | Téglalap magassága (sorok, max 255)           |
+| `stride`     | byte  | Közös sor szélesség (csak 7-param)            |
+
+**Felhasználási példák:**
+
+```python
+screen: array[byte, 1000][0x0400]
+buffer: array[byte, 1000][0x8000]
+tile: array[byte, 16][0xC000]  # 4x4 tile
+
+# Scroll balra 1 karakterrel
+blkcpy(screen, 1, screen, 0, 39, 25, 40)
+
+# Scroll felfelé 1 sorral
+blkcpy(screen, 40, screen, 0, 40, 24, 40)
+
+# Double buffer - 20x10 régió másolása
+blkcpy(buffer, 5*40+10, screen, 5*40+10, 20, 10, 40)
+
+# Tile blit - 4x4 tile különböző stride-okkal
+blkcpy(tile, 0, 4, screen, 5*40+10, 40, 4, 4)
+```
+
+**Automatikus irány-detektálás:**
+
+Átfedő régiók esetén (azonos tömb) a fordító automatikusan kiválasztja a helyes másolási irányt:
+
+| Eset                              | Irány    | Meghatározás   |
+| --------------------------------- | -------- | -------------- |
+| Különböző tömbök                  | Forward  | Fordítási idő  |
+| Azonos tömb, mindkét offset fix   | Helyes   | Fordítási idő  |
+| Azonos tömb, változó offset       | Helyes   | Futásidő       |
+
 ---
 
 ## 13. Speciális funkciók
@@ -3051,7 +3313,7 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 - ❌ `list`, `dict`, `set` (dinamikus kollekciók)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (kivéve beépített: `@lowercase`, `@standalone`)
+- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@forward`)
 - ❌ `async`/`await`
 - ❌ `import` (részlegesen támogatott)
 - ❌ Többsoros string (`"""..."""`)
