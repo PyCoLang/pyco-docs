@@ -905,25 +905,63 @@ def example():
 
 > **Megjegyzés:** Lokális változóknál mindkét buffer mérete ismert fordítási időben, így a `min(N, M)` limit automatikusan érvényesül. Függvényparaméternél (ha a méret nem ismert) a másolás a `\0` karakterig vagy maximum 255 byte-ig tart.
 
-### 3.6 Tuple (csak olvasható adat)
+### 3.6 Tuple (csak olvasható adat és pointer változók)
 
-A tuple egy **fix méretű, csak olvasható** adatsorozat, amely a data szegmensben tárolódik. Ideális konstans adatokhoz mint lookup táblák, sprite adatok, font adatok, szín paletták.
+A tuple hatékony hozzáférést biztosít fix adatsorozatokhoz. A PyCo **kétféle tuple változatot** támogat:
+
+1. **Inicializált tuple** - Csak olvasható konstans adat a data szegmensben
+2. **Tuple pointer változó** - Módosítható pointer, amely különböző tuple-kre mutathat
 
 ```python
 tuple[elem_típus]
 ```
 
+#### Inicializált Tuple (konstans adat)
+
+Ha egy tuple változót tuple literállal inicializálunk, az **csak olvasható konstanssá** válik:
+
 ```python
 def example():
-    # Lookup tábla - csak olvasható, nincs másolás!
+    # Inicializált tuple - csak olvasható, data szegmensben tárolódik
     colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
 
     # Indexelés működik
     x: byte = colors[2]    # x = 5
 
     # Írás TILOS - fordítási hiba!
-    # colors[0] = 99       # HIBA: tuple read-only
+    # colors[0] = 99       # HIBA: inicializált tuple csak olvasható
+    # colors = other       # HIBA: nem lehet újra értéket adni
 ```
+
+#### Tuple Pointer Változó
+
+Ha egy tuple változót **inicializálás nélkül** deklarálunk, az **pointer változóvá** válik, amelynek később adhatunk értéket:
+
+```python
+def example():
+    data1: tuple[byte] = (10, 20, 30)   # Inicializált (konstans)
+    data2: tuple[byte] = (40, 50, 60)   # Inicializált (konstans)
+
+    # Tuple pointer változó (nem inicializált)
+    ptr: tuple[byte]
+
+    # Kezdetben üres (len = 0)
+    print(len(ptr))    # Kimenet: 0
+
+    # Értéket adhatunk
+    ptr = data1
+    print(ptr[0])      # Kimenet: 10
+    print(len(ptr))    # Kimenet: 3
+
+    # Átírhatjuk
+    ptr = data2
+    print(ptr[0])      # Kimenet: 40
+```
+
+Ez hasznos:
+- Különböző adathalmazok közötti futásidejű választáshoz
+- Tuple-k függvényparaméterként való átadásához
+- Osztály property-k, amelyek tuple adatra mutatnak
 
 **Különbség az array-hoz képest:**
 
@@ -947,13 +985,29 @@ def example():
 - Módosítandó adatok
 - Pufferek, változó tartalom
 
-**Korlátozás:** A tuple **nem lehet osztály property!** A tuple compile-time adat, az objektum pedig runtime jön létre - ez összeférhetetlen. Használj array-t osztályokban.
+**Tuple mint osztály property:**
+
+A tuple-k használhatók osztály property-ként ugyanazzal a kétféle viselkedéssel:
 
 ```python
-class Player:
-    # data: tuple[byte]           # ❌ HIBA: tuple nem lehet property
-    buffer: array[byte, 10]       # ✅ OK: array használható
+class Level:
+    # Inicializált tuple property - MINDEN instance által megosztva (konstans)
+    default_colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
+
+    # Tuple pointer property - minden instance-nak más adatra mutathat
+    current_data: tuple[byte]
+
+def main():
+    level: Level
+
+    # Minden Level instance ugyanazt a default_colors-t látja (gyors!)
+    x: byte = level.default_colors[0]
+
+    # Minden instance más adatra mutathat
+    level.current_data = level.default_colors
 ```
+
+> **Megjegyzés:** Az inicializált tuple property-k (`= (...)`) egyszer tárolódnak a data szegmensben és minden instance megosztja őket. A tuple pointer property-k 2 byte-ot foglalnak instance-onként.
 
 **Tuple konstans modul szinten:**
 
@@ -2004,15 +2058,18 @@ def main():
 
 A dekorátorok a célplatformtól függenek. Például a C64 backend a következő dekorátorokat támogatja:
 
-| Dekorátor     | Hatás (C64)                                                |
-| ------------- | ---------------------------------------------------------- |
-| `@lowercase`  | Kisbetűs karakterkészlet mód (csak main fv.)               |
-| `@kernal`     | Kernal ROM engedélyezése (csak main fv.)                   |
-| `@noreturn`   | BASIC cleanup kihagyása - program soha nem lép ki (main)   |
-| `@irq`        | IRQ handler jelölés (rendszer IRQ-hoz láncolódik)          |
-| `@irq_raw`    | Nyers IRQ handler (közvetlen rti)                          |
+| Dekorátor        | Hatás                                                      |
+| ---------------- | ---------------------------------------------------------- |
+| `@lowercase`     | Kisbetűs karakterkészlet mód (csak main fv., C64)          |
+| `@kernal`        | Kernal ROM engedélyezése (csak main fv., C64)              |
+| `@noreturn`      | Cleanup kihagyása - program soha nem lép ki (main)         |
+| `@irq`           | IRQ handler jelölés (rendszer IRQ-hoz láncolódik)          |
+| `@irq_raw`       | Nyers IRQ handler (közvetlen rti)                          |
+| `@irq_hook`      | Könnyűsúlyú Kernal IRQ hook (nincs prológ, rts return)     |
+| `@forward`       | Forward deklaráció kölcsönös rekurzióhoz                   |
+| `@mapped(cím)`   | Előre lefordított kód hívása fix címen                     |
 
-> **Megjegyzés:** A dekorátorok részletes leírását lásd a célplatform fordító referenciájában (pl. `c64_compiler_reference.md`).
+> **Megjegyzés:** A platform-specifikus dekorátorok részletes leírását lásd a célplatform fordító referenciájában (pl. `c64_compiler_reference.md`).
 
 ### 8.5 Forward deklaráció (@forward)
 
@@ -2109,6 +2166,80 @@ class Calculator:
 | Kölcsönös rekurzió (A↔B)           | Igen           |
 | Később definiált függvény hívása   | Igen           |
 | Korábban definiált függvény hívása | Nem            |
+
+### 8.6 Külső függvények (@mapped)
+
+A `@mapped` dekorátor lehetővé teszi előre lefordított kód hívását fix memóriacímen anélkül, hogy inline assemblyt kellene használni. Ez hasznos külső rutinok (zenelejátszók, grafikus könyvtárak stb.) integrálásához, amelyek ismert címeken töltődnek be.
+
+#### Szintaxis
+
+```python
+@mapped(cím)
+def függvény_név(paraméterek) -> visszatérési_típus: ...
+```
+
+A függvény törzse `...` (Ellipsis) kell legyen, mivel a tényleges kód máshol található a memóriában.
+
+#### Példa: Zenelejátszó integráció
+
+```python
+PLAYER_INIT = 0x1000   # Cím, ahová a lejátszó init rutinja töltődik
+PLAYER_PLAY = 0x1003   # Cím, ahová a lejátszó play rutinja töltődik
+
+@mapped(PLAYER_INIT)
+def music_init(song: byte): ...
+
+@mapped(PLAYER_PLAY)
+def music_play(): ...
+
+def main():
+    music_init(0)        # Első szám inicializálása
+    while True:
+        music_play()     # Lejátszó hívása minden frame-ben
+        wait_frame()
+```
+
+#### Osztály metódusok
+
+A `@mapped` osztály metódusokkal is működik a logikus csoportosítás érdekében:
+
+```python
+class MusicPlayer:
+    @mapped(0x1000)
+    def init(song: byte): ...
+
+    @mapped(0x1003)
+    def play(): ...
+
+def main():
+    MusicPlayer.init(0)
+    MusicPlayer.play()
+```
+
+> **Megjegyzés:** A mapped osztály metódusoknak nincs `self` paramétere - statikus metódusokként viselkednek.
+
+#### Hívási konvenció
+
+A fordító regiszter-alapú hívási konvenciót használ a mapped függvényekhez:
+
+| Paraméter pozíció | Regiszter |
+| ----------------- | --------- |
+| 1. paraméter      | A         |
+| 2. paraméter      | X         |
+| 3. paraméter      | Y         |
+
+A visszatérési értékek A-ban (`byte`) vagy A+X-ben (`word`, alacsony byte A-ban) kerülnek át.
+
+> **Fontos:** Legfeljebb 3 byte méretű paraméter támogatott. Bonyolultabb paraméterátadáshoz használj globális változókat vagy inline assemblyt.
+
+#### Szabályok
+
+| Szabály               | Leírás                                                         |
+| --------------------- | -------------------------------------------------------------- |
+| Stub törzs            | A függvény törzse `...` (Ellipsis) kell legyen                 |
+| Címtartomány          | A címnek érvényes memóriatartományban kell lennie (platformfüggő) |
+| Nincs @irq kombináció | Nem kombinálható `@irq`, `@irq_raw` vagy `@irq_hook`-kal       |
+| Egész szám cím        | A címnek egész szám konstansnak kell lennie (nem változó)      |
 
 ---
 
@@ -3313,7 +3444,7 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 - ❌ `list`, `dict`, `set` (dinamikus kollekciók)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@forward`)
+- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`, `@mapped`)
 - ❌ `async`/`await`
 - ❌ `import` (részlegesen támogatott)
 - ❌ Többsoros string (`"""..."""`)

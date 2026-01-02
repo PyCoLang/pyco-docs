@@ -905,25 +905,63 @@ This way both worlds are supported: null-terminated (C-style) and fixed-length c
 
 > **Note:** For local variables, both buffer sizes are known at compile time, so the `min(N, M)` limit applies automatically. For function parameters (if size is unknown), copying continues until `\0` character or maximum 255 bytes.
 
-### 3.6 Tuple (read-only data)
+### 3.6 Tuple (read-only data and pointer variables)
 
-A tuple is a **fixed-size, read-only** data sequence stored in the data segment. Ideal for constant data like lookup tables, sprite data, font data, color palettes.
+Tuples provide efficient access to fixed data sequences. PyCo supports **two tuple variants**:
+
+1. **Initialized tuple** - Read-only constant data in data segment
+2. **Tuple pointer variable** - Mutable pointer that can reference different tuples
 
 ```python
 tuple[element_type]
 ```
 
+#### Initialized Tuple (constant data)
+
+When a tuple variable is initialized with a tuple literal, it becomes a **read-only constant**:
+
 ```python
 def example():
-    # Lookup table - read-only, no copying!
+    # Initialized tuple - read-only, stored in data segment
     colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
 
     # Indexing works
     x: byte = colors[2]    # x = 5
 
     # Writing is FORBIDDEN - compile error!
-    # colors[0] = 99       # ERROR: tuple read-only
+    # colors[0] = 99       # ERROR: initialized tuple is read-only
+    # colors = other       # ERROR: cannot reassign initialized tuple
 ```
+
+#### Tuple Pointer Variable
+
+When a tuple variable is declared **without initialization**, it becomes a **pointer variable** that can be assigned later:
+
+```python
+def example():
+    data1: tuple[byte] = (10, 20, 30)   # Initialized (constant)
+    data2: tuple[byte] = (40, 50, 60)   # Initialized (constant)
+
+    # Tuple pointer variable (uninitialized)
+    ptr: tuple[byte]
+
+    # Initially empty (len = 0)
+    print(len(ptr))    # Output: 0
+
+    # Can be assigned
+    ptr = data1
+    print(ptr[0])      # Output: 10
+    print(len(ptr))    # Output: 3
+
+    # Can be reassigned
+    ptr = data2
+    print(ptr[0])      # Output: 40
+```
+
+This is useful for:
+- Selecting between different data sets at runtime
+- Passing tuples as function parameters
+- Class properties that reference tuple data
 
 **Difference from array:**
 
@@ -947,13 +985,29 @@ def example():
 - Modifiable data
 - Buffers, variable content
 
-**Restriction:** Tuple **cannot be a class property!** Tuple is compile-time data, while objects are created at runtime - these are incompatible. Use array in classes.
+**Tuple as class property:**
+
+Tuples can be used as class properties with the same two-variant behavior:
 
 ```python
-class Player:
-    # data: tuple[byte]           # ❌ ERROR: tuple cannot be property
-    buffer: array[byte, 10]       # ✅ OK: array can be used
+class Level:
+    # Initialized tuple property - shared by ALL instances (constant)
+    default_colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
+
+    # Tuple pointer property - each instance can have different data
+    current_data: tuple[byte]
+
+def main():
+    level: Level
+
+    # All Level instances share the same default_colors (fast!)
+    x: byte = level.default_colors[0]
+
+    # Each instance can point to different data
+    level.current_data = level.default_colors
 ```
+
+> **Note:** Initialized tuple properties (`= (...)`) are stored once in the data segment and shared by all instances. Tuple pointer properties require 2 bytes per instance.
 
 **Tuple constant at module level:**
 
@@ -2064,16 +2118,19 @@ def main():
 
 Decorators depend on the target platform. For example, the C64 backend supports the following decorators:
 
-| Decorator     | Effect (C64)                                           |
-| ------------- | ------------------------------------------------------ |
-| `@lowercase`  | Lowercase character set mode (main fn. only)           |
-| `@kernal`     | Keep Kernal ROM enabled (main fn. only)                |
-| `@noreturn`   | Skip BASIC cleanup - program never exits (main only)   |
-| `@irq`        | Mark function as IRQ handler (chains to system IRQ)    |
-| `@irq_raw`    | Mark function as raw IRQ handler (direct rti)          |
-| `@irq_hook`   | Lightweight Kernal IRQ hook (no prologue, rts return)  |
+| Decorator        | Effect                                                 |
+| ---------------- | ------------------------------------------------------ |
+| `@lowercase`     | Lowercase character set mode (main fn. only, C64)      |
+| `@kernal`        | Keep Kernal ROM enabled (main fn. only, C64)           |
+| `@noreturn`      | Skip cleanup - program never exits (main only)         |
+| `@irq`           | Mark function as IRQ handler (chains to system IRQ)    |
+| `@irq_raw`       | Mark function as raw IRQ handler (direct rti)          |
+| `@irq_hook`      | Lightweight Kernal IRQ hook (no prologue, rts return)  |
+| `@naked`         | IRQ-callable function without runtime overhead         |
+| `@forward`       | Forward declaration for mutual recursion               |
+| `@mapped(addr)`  | Call pre-compiled code at fixed address                |
 
-> **Note:** For detailed decorator descriptions, see the target platform compiler reference (e.g., `c64_compiler_reference.md`).
+> **Note:** For platform-specific decorator details, see the target platform compiler reference (e.g., `c64_compiler_reference.md`).
 
 ### 8.5 Forward Declaration (@forward)
 
@@ -2170,6 +2227,142 @@ class Calculator:
 | Mutual recursion (A↔B)                 | Yes              |
 | Calling later defined function         | Yes              |
 | Calling earlier defined function       | No               |
+
+### 8.6 External Functions (@mapped)
+
+The `@mapped` decorator allows calling pre-compiled code at a fixed memory address without using inline assembly. This is useful for integrating external routines (music players, graphics libraries, etc.) that are loaded at known addresses.
+
+#### Syntax
+
+```python
+@mapped(address)
+def function_name(parameters) -> return_type: ...
+```
+
+The function body must be `...` (Ellipsis) since the actual code exists elsewhere in memory.
+
+#### Example: Music Player Integration
+
+```python
+PLAYER_INIT = 0x1000   # Address where player init routine is loaded
+PLAYER_PLAY = 0x1003   # Address where player play routine is loaded
+
+@mapped(PLAYER_INIT)
+def music_init(song: byte): ...
+
+@mapped(PLAYER_PLAY)
+def music_play(): ...
+
+def main():
+    music_init(0)        # Initialize first song
+    while True:
+        music_play()     # Call player each frame
+        wait_frame()
+```
+
+#### Class Methods
+
+`@mapped` also works with class methods for logical grouping:
+
+```python
+class MusicPlayer:
+    @mapped(0x1000)
+    def init(song: byte): ...
+
+    @mapped(0x1003)
+    def play(): ...
+
+def main():
+    MusicPlayer.init(0)
+    MusicPlayer.play()
+```
+
+> **Note:** Mapped class methods have no `self` parameter - they behave like static methods.
+
+#### Calling Convention
+
+The compiler uses a register-based calling convention for mapped functions:
+
+| Parameter position | Register |
+| ------------------ | -------- |
+| 1st parameter      | A        |
+| 2nd parameter      | X        |
+| 3rd parameter      | Y        |
+
+Return values are passed in A (for `byte`) or A+X (for `word`, with low byte in A).
+
+> **Important:** Only up to 3 byte-sized parameters are supported. For more complex parameter passing, use global variables or inline assembly.
+
+#### Rules
+
+| Rule                  | Description                                                    |
+| --------------------- | -------------------------------------------------------------- |
+| Stub body             | Function body must be `...` (Ellipsis)                         |
+| Address range         | Address must be in valid memory range (platform-dependent)     |
+| No @irq combination   | Cannot combine with `@irq`, `@irq_raw`, or `@irq_hook`         |
+| Integer address       | Address must be an integer constant (not a variable)           |
+
+### 8.7 IRQ-Callable Functions (@naked)
+
+The `@naked` decorator marks a function as safe to call from interrupt handlers without the standard IRQ call overhead. When a normal function is called from an IRQ handler, the compiler must save and restore the main program's runtime state (stack frame, temporary registers). For functions that are specifically designed for IRQ use (like music player tick routines), this overhead is unnecessary.
+
+#### Syntax
+
+```python
+@naked
+def function_name(parameters) -> return_type:
+    # Function body (typically inline assembly)
+```
+
+#### Example: Music Player Integration
+
+```python
+@naked
+def music_tick():
+    """Play one tick of music. Designed to be called from IRQ."""
+    __asm__("""
+    jsr _mp_play
+    """)
+
+@irq
+def irq_handler(vic: byte):
+    if vic & 0x01:
+        music_tick()   # No IRQ call overhead - just a simple JSR!
+```
+
+#### How It Works
+
+When calling a function from an IRQ handler, the compiler normally emits:
+
+| Without @naked (normal function)        | With @naked                    |
+| --------------------------------------- | ------------------------------ |
+| Save tmp0-tmp5 to hardware stack        | —                              |
+| Save FP/SSP to hardware stack           | —                              |
+| Adjust SSP past IRQ locals              | —                              |
+| JSR to function                         | JSR to function                |
+| Restore FP/SSP from hardware stack      | —                              |
+| Restore tmp0-tmp5 from hardware stack   | —                              |
+
+The overhead savings are significant - approximately 100-120 cycles per call.
+
+#### Programmer's Responsibility
+
+The `@naked` decorator does not restrict what you can put in the function - it simply tells the compiler to skip the IRQ overhead. **It is the programmer's responsibility** to ensure:
+
+1. The function does not corrupt registers that the main program expects to be preserved
+2. If the function uses temporary registers (tmp0-tmp5), FP, or SSP, it saves and restores them itself
+3. The function is actually safe to call from interrupt context
+
+#### Rules
+
+| Rule                   | Description                                                    |
+| ---------------------- | -------------------------------------------------------------- |
+| Top-level only         | Cannot be used on class methods                                |
+| No @irq combination    | Cannot combine with `@irq`, `@irq_raw`, or `@irq_hook`         |
+| Normal context OK      | Can also be called from normal (non-IRQ) context               |
+| Parameters allowed     | Can have parameters and return values                          |
+
+> **Note:** For platform-specific details (cycle counts, register usage), see the target platform compiler reference.
 
 ---
 
@@ -3375,7 +3568,7 @@ This summary contains the most important differences between Python and PyCo.
 - ❌ `list`, `dict`, `set` (dynamic collections)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`)
+- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`, `@mapped`)
 - ❌ `async`/`await`
 - ❌ `import` (partially supported)
 - ❌ Multi-line string (`"""..."""`)

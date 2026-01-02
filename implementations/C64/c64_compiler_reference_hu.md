@@ -505,13 +505,10 @@ irq_handler:
 
 A compiler fordítási időben ellenőrzi ezeket a szabályokat:
 
-| Művelet | Hibaüzenet | Miért tilos? |
-|---------|------------|--------------|
-| `float`, `f16`, `f32` típusok | "Float type not allowed in @irq" | FAC/ARG ($61-$6E) nem mentődik |
-| Függvényhívás | "Function calls not allowed in @irq" | A hívott fv. normál temp-et használna |
-| Metódushívás | "Method calls not allowed in @irq" | ZP_SELF + függvényhívás |
-| `print()` | "print() not allowed in @irq" | spbuf/spsave nem mentődik |
-| Konstruktor hívás (`obj()`) | "Constructor calls not allowed in @irq" | Metódushívással egyenértékű |
+| Művelet                       | Hibaüzenet                             | Miért tilos?                           |
+| ----------------------------- | -------------------------------------- | -------------------------------------- |
+| `float`, `f16`, `f32` típusok | "Float type not allowed in @irq"       | FAC/ARG ($61-$6E) nem mentődik         |
+| `print()`                     | "print() not allowed in @irq"          | spbuf/spsave nem mentődik              |
 
 #### IRQ-ban ENGEDÉLYEZETT műveletek
 
@@ -522,6 +519,75 @@ A compiler fordítási időben ellenőrzi ezeket a szabályokat:
 - ✅ `__sei__()`, `__cli__()`, `__inc__()`, `__dec__()` intrinsics
 - ✅ `__asm__()` inline assembly
 - ✅ `addr()`, `size()` compile-time függvények
+- ✅ **Függvényhívás** (overhead-del, lásd alább)
+- ✅ **@naked függvényhívás** (overhead nélkül)
+
+#### Függvényhívás IRQ-ból
+
+Az IRQ handlerből normál függvények is hívhatók, de jelentős overhead-del járnak (~100-120 ciklus):
+
+```asm
+; Prologue: Főprogram állapotának mentése
+pha                     ; tmp0-tmp5 mentése (6 byte)
+pha
+...
+pha                     ; FP, SSP mentése (4 byte)
+pha
+...                     ; SSP/FP beállítás
+
+jsr __F_some_function   ; Tényleges függvényhívás
+
+; Epilogue: Állapot visszaállítása
+pla                     ; FP, SSP visszaállítás
+pla
+...
+pla                     ; tmp0-tmp5 visszaállítás
+```
+
+Ez az overhead **minden** normál függvényhívásra vonatkozik IRQ-ból. Ha a hívott függvény nem használ PyCo runtime-ot (FP, SSP, tmp regiszterek), ez felesleges overhead!
+
+#### @naked dekorátor - IRQ-barát függvények
+
+A `@naked` dekorátor jelzi a compilernek, hogy a függvény IRQ-ból hívható az overhead nélkül. Tipikus használati eset: zenelejátszó tick függvények.
+
+```python
+@naked
+def music_tick():
+    """Zene lejátszás egy tick-je. IRQ-ból hívandó."""
+    __asm__("""
+    jsr _mp_play
+    """)
+
+@irq
+def irq_handler(vic: byte):
+    if vic & 0x01:
+        music_tick()   # Csak JSR - nincs IRQ overhead!
+```
+
+**Generált kód összehasonlítás:**
+
+| Normál függvényhívás IRQ-ból                    | @naked függvényhívás IRQ-ból |
+| ----------------------------------------------- | ---------------------------- |
+| tmp0-tmp5 mentése hardware stack-re (~18 cyc)   | —                            |
+| FP/SSP mentése hardware stack-re (~12 cyc)      | —                            |
+| SSP/FP beállítás IRQ locals után (~25 cyc)      | —                            |
+| JSR függvény (6 cyc)                            | JSR függvény (6 cyc)         |
+| FP/SSP visszaállítás (~12 cyc)                  | —                            |
+| tmp0-tmp5 visszaállítás (~18 cyc)               | —                            |
+| **Összesen: ~91-120+ ciklus**                   | **Összesen: 6 ciklus**       |
+
+**Programozó felelőssége:** A `@naked` függvénynek magának kell gondoskodnia arról, hogy:
+- Nem rontja el a főprogram regisztereit
+- Ha tmp0-tmp5/FP/SSP-t használ, maga menti és állítja vissza
+
+**Szabályok:**
+
+| Szabály                  | Leírás                                                 |
+| ------------------------ | ------------------------------------------------------ |
+| Csak top-level           | Metódusokon nem használható                            |
+| Nem kombinálható @irq-val| @naked + @irq/irq_raw/irq_hook értelmetlen             |
+| Normál kontextusból is   | Nem-IRQ kontextusból is hívható                        |
+| Paraméterek megengedettek| Bármilyen paraméter és visszatérési típus megengedett  |
 
 #### IRQ handler beállítása
 
@@ -955,6 +1021,142 @@ def copy_charset():
 ```
 
 > **Fontos:** A `__sei__()` és `__cli__()` mindig párban használandók! Az interrupt tiltás ideje alatt a rendszer nem reagál billentyűzetre, időzítőkre stb.
+
+### Raster IRQ segédfüggvények
+
+A C64 VIC-II chipjének raster IRQ kezeléséhez kényelmes segédfüggvények állnak rendelkezésre.
+
+#### `__enable_raster_irq__(line)` - Raster IRQ bekapcsolása
+
+Bekapcsolja a VIC-II raster IRQ-t a megadott képernyősoron (0-311). Automatikusan kezeli a SEI/CLI-t és a $D011 bit 7-et (9. raster bit).
+
+```python
+IRQ_LINE = 100
+
+@irq
+def raster_handler(vic: byte, cia1: byte):
+    vic = 0x01  # IRQ acknowledge
+    border: byte[0xD020]
+    border = 1
+
+def main():
+    __set_irq__(raster_handler)
+    __enable_raster_irq__(IRQ_LINE)
+    while True:
+        pass
+```
+
+**Generált kód (konstans line):**
+```asm
+php
+sei
+lda $d011
+and #$7f          ; vagy ora #$80 ha line >= 256
+sta $d011
+lda #<line
+sta $d012
+lda #$01
+sta $d01a
+plp
+```
+
+#### `__disable_raster_irq__()` - Raster IRQ kikapcsolása
+
+Kikapcsolja a VIC-II raster IRQ-t. Automatikusan kezeli a SEI/CLI-t.
+
+```python
+def cleanup():
+    __disable_raster_irq__()
+```
+
+**Generált kód:**
+```asm
+php
+sei
+lda #$00
+sta $d01a
+plp
+```
+
+#### `__set_raster__(line)` - Raster sor beállítása
+
+Beállítja a következő raster IRQ sort (0-311). Tipikusan az IRQ handlerben használatos split-screen effektekhez. IRQ kontextusban **nincs** SEI/CLI overhead.
+
+```python
+FIRST_LINE = 50
+SECOND_LINE = 150
+
+@irq
+def split_screen(vic: byte, cia1: byte):
+    vic = 0x01  # IRQ acknowledge
+    current: word
+    current = __get_raster__()
+
+    if current < 100:
+        # Első sávban vagyunk, következő a második
+        __set_raster__(SECOND_LINE)
+        # ... első sáv beállításai ...
+    else:
+        # Második sávban vagyunk, következő az első
+        __set_raster__(FIRST_LINE)
+        # ... második sáv beállításai ...
+```
+
+**Generált kód IRQ-ban (nincs SEI/CLI):**
+```asm
+lda $d011
+and #$7f          ; vagy ora #$80
+sta $d011
+lda #<line
+sta $d012
+```
+
+**Generált kód IRQ-n kívül (védett):**
+```asm
+php
+sei
+lda $d011
+and #$7f
+sta $d011
+lda #<line
+sta $d012
+plp
+```
+
+#### `__get_raster__()` - Aktuális raster sor lekérdezése
+
+Visszaadja az aktuális raster sort word-ként (0-311). Nincs IRQ védelem, mert csak olvasás.
+
+```python
+@irq
+def wait_for_line(vic: byte, cia1: byte):
+    current: word
+    current = __get_raster__()
+    if current == 260:
+        # ... VBlank terület ...
+        pass
+```
+
+**Generált kód:**
+```asm
+lda $d012         ; Alsó 8 bit
+sta tmp0
+lda $d011
+and #$80          ; Bit 7 = raster bit 8
+asl
+lda #$00
+rol               ; Carry → bit 0
+sta tmp1
+```
+
+#### Összefoglaló táblázat
+
+| Függvény                | Argumentum  | Visszatérés | IRQ védelem                         |
+| ----------------------- | ----------- | ----------- | ----------------------------------- |
+| `__enable_raster_irq__` | line (word) | void        | PHP/SEI...PLP (mindig)              |
+| `__disable_raster_irq__`| -           | void        | PHP/SEI...PLP (mindig)              |
+| `__set_raster__`        | line (word) | void        | PHP/SEI...PLP (csak IRQ-n kívül)    |
+| `__get_raster__`        | -           | word        | Nincs (csak olvasás)                |
 
 ---
 
