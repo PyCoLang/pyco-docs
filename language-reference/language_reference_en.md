@@ -88,6 +88,8 @@ Names can only contain lowercase and uppercase letters, numbers, and underscores
 
 Comments are notes written for the programmer that the compiler ignores. Their purpose is to explain and document code, or temporarily disable code sections.
 
+#### Single-line Comments
+
 Everything from the `#` character to the end of the line is considered a comment:
 
 ```python
@@ -96,7 +98,40 @@ def example():
     x: int = 42  # This is an end-of-line comment
 ```
 
-> **Note:** Only single-line comments exist. The multi-line string comment used in Python (`"""..."""`) does not work here.
+#### Docstrings
+
+PyCo supports **docstrings** using triple-quoted strings (`"""..."""`) for documenting functions, methods, and classes. Docstrings must be the first statement in the function/method/class body:
+
+```python
+def calculate_score(hits: byte, multiplier: byte) -> word:
+    """
+    Calculate the player's score based on hits and multiplier.
+    Returns the calculated score as a word value.
+    """
+    result: word
+    result = word(hits) * word(multiplier) * 10
+    return result
+
+class Player:
+    """
+    Represents a player in the game.
+    Handles position, health, and score tracking.
+    """
+    x: byte = 0
+    y: byte = 0
+    health: byte = 100
+
+    def take_damage(amount: byte):
+        """Reduce player health by the specified amount."""
+        if self.health > amount:
+            self.health = self.health - amount
+        else:
+            self.health = 0
+```
+
+**Important:** Docstrings are ignored by the compiler - they generate no code and use no memory. They exist purely for documentation purposes.
+
+> **Note:** Only triple double-quotes (`"""`) are supported, not single quotes (`'''`).
 
 ### 2.3 Blocks and Indentation
 
@@ -2353,16 +2388,43 @@ The `@naked` decorator does not restrict what you can put in the function - it s
 2. If the function uses temporary registers (tmp0-tmp5), FP, or SSP, it saves and restores them itself
 3. The function is actually safe to call from interrupt context
 
+#### Register-Based Parameter Passing
+
+The `@naked` decorator uses the same register-based calling convention as `@mapped` functions. Parameters are passed directly in CPU registers instead of the stack, eliminating frame setup overhead.
+
+```python
+@naked
+def music_disable_channel(ch: byte):
+    """Disable music on a channel. ch arrives in first register."""
+    __asm__("""
+    // ch parameter is in first register (platform-specific)
+    // Process it directly without stack access
+    ...
+    rts
+    """)
+
+# Caller side - parameter goes directly to register
+music_disable_channel(2)
+```
+
+**Parameter limits:**
+- Maximum 3 register slots available (platform-dependent)
+- Byte parameters use 1 slot each
+- Word parameters use 2 slots
+- See platform compiler reference for exact register assignments
+
+> **ABI Note:** The exact register assignment for parameters depends on the target platform. For example, on 6502-based systems, the first byte parameter goes to A, second to X, third to Y. See your platform's compiler reference for details.
+
 #### Rules
 
-| Rule                   | Description                                                    |
-| ---------------------- | -------------------------------------------------------------- |
-| Top-level only         | Cannot be used on class methods                                |
-| No @irq combination    | Cannot combine with `@irq`, `@irq_raw`, or `@irq_hook`         |
-| Normal context OK      | Can also be called from normal (non-IRQ) context               |
-| Parameters allowed     | Can have parameters and return values                          |
+| Rule                     | Description                                                    |
+| ------------------------ | -------------------------------------------------------------- |
+| Top-level only           | Cannot be used on class methods                                |
+| No @irq combination      | Cannot combine with `@irq`, `@irq_raw`, or `@irq_hook`         |
+| Normal context OK        | Can also be called from normal (non-IRQ) context               |
+| Register-based params    | Parameters passed in registers (max 3 slots, ABI-dependent)    |
 
-> **Note:** For platform-specific details (cycle counts, register usage), see the target platform compiler reference.
+> **Note:** For platform-specific details (cycle counts, register usage, ABI), see the target platform compiler reference.
 
 ---
 
@@ -3419,6 +3481,70 @@ For overlapping regions (same array), the compiler automatically selects the cor
 | Different arrays                  | Forward   | Compile-time   |
 | Same array, both offsets constant | Correct   | Compile-time   |
 | Same array, variable offset       | Correct   | Runtime        |
+
+### memfill
+
+Fast memory fill. Fills an array with a specified value.
+
+**2-parameter syntax (fill entire array):**
+
+```python
+memfill(array, value)
+```
+
+**3-parameter syntax (fill first N elements):**
+
+```python
+memfill(array, value, count)
+```
+
+**Parameters:**
+
+| Parameter | Type        | Description                                        |
+| --------- | ----------- | -------------------------------------------------- |
+| `array`   | array       | Array to fill (variable or class property)         |
+| `value`   | element type| Value to fill with (must match array element type) |
+| `count`   | word        | Number of elements to fill (optional)              |
+
+**Key behavior:**
+- **2-parameter version:** Fills the ENTIRE array - size is taken from type declaration
+- **3-parameter version:** Fills only the first `count` elements
+
+**Examples:**
+
+```python
+screen: array[byte, 1000][0x0400]
+colorram: array[byte, 1000][0xD800]
+
+# Fill entire screen with spaces (1000 bytes)
+memfill(screen, 32)
+
+# Fill entire color RAM with white (1000 bytes)
+memfill(colorram, 1)
+
+# Fill only first 40 bytes (one row)
+memfill(screen, 0, 40)
+```
+
+**Class property support:**
+
+```python
+class Display:
+    buffer: array[byte, 40][0x0400]
+
+    def clear():
+        # Works with self.property - fills entire array
+        memfill(self.buffer, 32)
+```
+
+**Supported element types:**
+
+| Type    | Size    | Notes                       |
+| ------- | ------- | --------------------------- |
+| `byte`  | 1 byte  | Direct value (0-255)        |
+| `word`  | 2 bytes | Little-endian fill          |
+| `int`   | 2 bytes | Same as word                |
+| `float` | 4 bytes | MBF32 format fill           |
 
 ---
 

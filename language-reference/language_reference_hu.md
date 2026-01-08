@@ -88,6 +88,8 @@ A nevek csak kis- és nagybetűket, számokat és aláhúzást tartalmazhatnak, 
 
 A kommentek a programozó számára írt megjegyzések, amelyeket a fordító figyelmen kívül hagy. Céljuk a kód magyarázata, dokumentálása, vagy ideiglenesen kódrészletek kikapcsolása.
 
+#### Egysoros kommentek
+
 A `#` karaktertől a sor végéig minden kommentnek számít:
 
 ```python
@@ -96,7 +98,40 @@ def example():
     x: int = 42  # Ez egy sor végi komment
 ```
 
-> **Megjegyzés:** Csak egysoros kommentek léteznek. A Pythonban használt többsoros string komment (`"""..."""`) itt nem működik.
+#### Docstringek
+
+A PyCo támogatja a **docstringeket** hármas idézőjellel (`"""..."""`) függvények, metódusok és osztályok dokumentálásához. A docstringnek a függvény/metódus/osztály törzsének első utasításaként kell szerepelnie:
+
+```python
+def calculate_score(hits: byte, multiplier: byte) -> word:
+    """
+    Kiszámítja a játékos pontszámát a találatok és szorzó alapján.
+    A kiszámított pontszámot word értékként adja vissza.
+    """
+    result: word
+    result = word(hits) * word(multiplier) * 10
+    return result
+
+class Player:
+    """
+    A játékost reprezentálja a játékban.
+    Kezeli a pozíciót, életerőt és pontszámot.
+    """
+    x: byte = 0
+    y: byte = 0
+    health: byte = 100
+
+    def take_damage(amount: byte):
+        """Csökkenti a játékos életerejét a megadott értékkel."""
+        if self.health > amount:
+            self.health = self.health - amount
+        else:
+            self.health = 0
+```
+
+**Fontos:** A docstringeket a fordító figyelmen kívül hagyja - nem generálnak kódot és nem foglalnak memóriát. Kizárólag dokumentációs célokat szolgálnak.
+
+> **Megjegyzés:** Csak a hármas dupla idézőjel (`"""`) támogatott, az egyszeres (`'''`) nem.
 
 ### 2.3 Blokkok és behúzás
 
@@ -3296,6 +3331,70 @@ blkcpy(tile, 0, 4, screen, 5*40+10, 40, 4, 4)
 | Különböző tömbök                  | Forward  | Fordítási idő  |
 | Azonos tömb, mindkét offset fix   | Helyes   | Fordítási idő  |
 | Azonos tömb, változó offset       | Helyes   | Futásidő       |
+
+### memfill
+
+Gyors memória kitöltés. Egy tömböt tölt ki a megadott értékkel.
+
+**2 paraméteres szintaxis (teljes tömb kitöltése):**
+
+```python
+memfill(tömb, érték)
+```
+
+**3 paraméteres szintaxis (első N elem kitöltése):**
+
+```python
+memfill(tömb, érték, darabszám)
+```
+
+**Paraméterek:**
+
+| Paraméter    | Típus       | Leírás                                              |
+| ------------ | ----------- | --------------------------------------------------- |
+| `tömb`       | array       | Kitöltendő tömb (változó vagy osztály property)     |
+| `érték`      | elem típusa | A kitöltési érték (meg kell egyezzen az elem típussal) |
+| `darabszám`  | word        | Kitöltendő elemek száma (opcionális)                |
+
+**Működés:**
+- **2 paraméteres verzió:** A TELJES tömböt kitölti - a méret a típusdeklarációból jön
+- **3 paraméteres verzió:** Csak az első `darabszám` elemet tölti ki
+
+**Példák:**
+
+```python
+screen: array[byte, 1000][0x0400]
+colorram: array[byte, 1000][0xD800]
+
+# Teljes képernyő kitöltése szóközzel (1000 byte)
+memfill(screen, 32)
+
+# Teljes szín RAM kitöltése fehérrel (1000 byte)
+memfill(colorram, 1)
+
+# Csak az első 40 byte kitöltése (egy sor)
+memfill(screen, 0, 40)
+```
+
+**Osztály property támogatás:**
+
+```python
+class Display:
+    buffer: array[byte, 40][0x0400]
+
+    def clear():
+        # Működik self.property-vel - teljes tömböt tölti ki
+        memfill(self.buffer, 32)
+```
+
+**Támogatott elem típusok:**
+
+| Típus   | Méret   | Megjegyzés                  |
+| ------- | ------- | --------------------------- |
+| `byte`  | 1 byte  | Közvetlen érték (0-255)     |
+| `word`  | 2 byte  | Little-endian kitöltés      |
+| `int`   | 2 byte  | Azonos a word-del           |
+| `float` | 4 byte  | MBF32 formátum kitöltés     |
 
 ---
 

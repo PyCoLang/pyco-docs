@@ -86,10 +86,15 @@ A Zero Page a legértékesebb memória a 6502-n - 1 byte-os címzés, gyorsabb m
 | $11        | 1     | Sprint temp (sptmp) - átfedi retval+2-t                 |
 | $13-$15    | 3     | String temp registers (tmp6-tmp8)                       |
 | $16-$17    | 2     | Self pointer (ZP_SELF) - metódus optimalizáláshoz       |
+| $18-$19    | 2     | Screen rutinok pointer (scr_tmp0-1)                     |
+| $1A-$1F    | 6     | IRQ temp regiszterek (irq_tmp0-5)                       |
+| $20        | 1     | putchar_save_y - CHROUT Y mentés                        |
+| $21        | 1     | CIA1 IRQ cache (lazy reading)                           |
+| $22-$29    | 8     | **LEAF_ZP - Leaf függvény lokális változók**            |
 
 **Megjegyzések:**
 - **Sprint overlap**: spsave/sptmp átfedi retval-t, de sosem aktívak egyszerre
-- **Compiler ZP** ($02-$17): Folytonos blokk a fordító számára
+- **Compiler ZP** ($02-$29): Folytonos blokk a fordító számára
 
 ### Float regiszterek (BASIC FAC/ARG területén)
 
@@ -116,7 +121,7 @@ A float regiszterek a C64 BASIC saját FAC/ARG helyén vannak - ez elkerüli a Z
 
 | Cím        | Méret | Cél                                        |
 | ---------- | ----- | ------------------------------------------ |
-| $18-$56    | 63    | Szabad - memory-mapped változókhoz         |
+| $2A-$56    | 45    | Szabad - memory-mapped változókhoz         |
 | $5E-$60    | 3     | Szabad (float work terület után)           |
 | $67-$68    | 2     | Szabad (FAC és ARG között)                 |
 | $6F-$7F    | 17    | Szabad (ARG után)                          |
@@ -125,10 +130,10 @@ A float regiszterek a C64 BASIC saját FAC/ARG helyén vannak - ez elkerüli a Z
 
 ```python
 # Gyors változók a Zero Page-en
-# $18-$56 folytonos blokk szabad! (63 byte)
-fast_x: byte[0x18]
-fast_y: byte[0x19]
-temp_ptr: word[0x1A]
+# $2A-$56 folytonos blokk szabad! (45 byte)
+fast_x: byte[0x2A]
+fast_y: byte[0x2B]
+temp_ptr: word[0x2C]
 ```
 
 **Miért nincs automatikus ZP allokáció lokális változókhoz?**
@@ -137,6 +142,28 @@ temp_ptr: word[0x1A]
 - Egyszerűbb fordító, kevesebb mágikus viselkedés
 
 **Megjegyzés:** A $00-$01 a 6502 CPU portja, $80-$FF-et a KERNAL használja.
+
+### LEAF_ZP Optimalizáció (O4)
+
+A **leaf függvények** (amelyek nem hívnak más függvényt) lokális változói a Zero Page $22-$29 területén tárolódnak az SSP/FP alapú stack helyett. Ez az O4 optimalizáció automatikusan aktiválódik, ha:
+
+1. **Leaf függvény** - nem hív más függvényt (kivéve runtime helper-ek)
+2. **Nincs paramétere** - paraméterek SSP-n keresztül jönnek
+3. **Lokális változók mérete ≤ 8 byte** - belefér a LEAF_ZP területre
+4. **Nem IRQ handler** - `@irq`, `@irq_raw`, `@irq_hook`, `@irq_helper` nem használja
+5. **Nem `@naked`** - naked függvények nem kapnak automatikus kódot
+6. **Nem `@mapped`** - külső címre mutatnak
+
+**Előnyök:**
+
+| Megközelítés | Prologue  | Hozzáférés       | Epilogue  | Összes   |
+|--------------|-----------|------------------|-----------|----------|
+| SSP/FP       | ~25 byte  | 7 cy `(FP),y`    | ~15 byte  | ~40 byte |
+| LEAF_ZP      | 0 byte    | 3 cy `lda $xx`   | 0 byte    | 0 byte   |
+
+**Miért biztonságos?**
+
+A leaf függvények definíció szerint nem hívnak más függvényt. Ezért egyszerre csak egy leaf függvény futhat, és a LEAF_ZP terület megosztható közöttük. Rekurzió vagy nem-leaf függvény továbbra is SSP/FP-t használ.
 
 ## Típusok Memória Reprezentációja
 
