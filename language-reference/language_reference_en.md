@@ -41,7 +41,7 @@ The first reference implementation was made for the C64.
 
 ```python
 # This is a comment
-import sys
+from sys import clear_screen
 
 class Position:
     # All properties must be declared
@@ -215,34 +215,137 @@ def main():
 
 ### 2.6 Import
 
-Loading modules is done with the `import` keyword. This loads compiled modules from which we can use functions and classes.
+The `import` statement loads functions and classes from compiled modules. In PyCo, the location of the import determines the loading mode.
+
+**Syntax:**
 
 ```python
-import c64
-import math
+from module_name import name1, name2, name3
+from module_name import name as alias
 ```
 
-**Simple rules:**
-- There are no namespaces - one module name means one file
-- The compiler only loads actually used functions from the module
-- A three-letter prefix is recommended for your own modules to avoid collisions (e.g., `abc_utils`)
+**Basic rules:**
 
-**Accessing modules:**
+- **Explicit listing required**: All used names must be explicitly listed
+- **No wildcard**: `from X import *` is NOT supported
+- **No prefix needed**: Imported names can be used directly
+
+#### Two Import Modes
+
+The location of the import determines how the module is loaded:
+
+| Import Location         | Mode    | When Loaded   | Lifetime         |
+| ----------------------- | ------- | ------------- | ---------------- |
+| File beginning (top-level) | Static  | Compile-time  | Program lifetime |
+| Inside function         | Dynamic | Runtime       | Scope end        |
+
+**Static import (top-level):**
 
 ```python
-import math
+# At file beginning - STATICALLY compiled into the program
+from math import sin, cos
 
-def example():
-    x: float
-    x = math.sin(3.14)
+def main():
+    x: float = sin(0.5)    # Can be used directly
+    y: float = cos(0.5)
 ```
 
-**Include vs Import Comparison:**
+Benefits of static import:
+- No runtime loading
+- Compiler checks types
+- Tree-shaking: only used functions are included in the program
 
-| Keyword          | What it does                  | When to use                       |
-| ---------------- | ----------------------------- | --------------------------------- |
-| `include("name")` | Textually inserts the file   | Sharing constants, definitions    |
-| `import name`    | Loads a compiled module       | Using functions, classes          |
+**Dynamic import (inside function):**
+
+```python
+def game_screen():
+    # Inside function - DYNAMICALLY loaded at runtime
+    from game_utils import update, draw
+    from music import play
+
+    play()
+    while not game_over:
+        update()
+        draw()
+    # ← Function end: module memory is FREED!
+```
+
+Benefits of dynamic import:
+- Memory efficient: only what's needed is in memory
+- Scope = Lifetime: automatic cleanup
+- Unlimited program size through partial loading
+
+#### Alias (`as`) Support
+
+Used for name collisions or shortening:
+
+```python
+from math import sin as math_sin
+from audio import sin as audio_sin
+
+x: float = math_sin(0.5)
+freq: float = audio_sin(440.0)
+```
+
+**Name collision = compile error:**
+
+```python
+from math import sin
+from audio import sin     # ERROR: 'sin' already imported from 'math'!
+
+# Solution - use an alias:
+from math import sin
+from audio import sin as audio_sin   # OK
+```
+
+#### Export Rules
+
+Modules follow Python-style export rules:
+
+| Name Format                    | Exported?                |
+| ------------------------------ | ------------------------ |
+| `name`                         | ✓ Yes (public)           |
+| `_name`                        | ✗ No (private)           |
+| `from X import foo`            | ✓ Yes (re-export)        |
+| `from X import foo as _foo`    | ✗ No (private alias)     |
+
+```python
+# math.pyco module
+def sin(x: float) -> float:     # ✓ Exported (public)
+    return _sin_impl(x)
+
+def _sin_impl(x: float) -> float:   # ✗ NOT exported (private)
+    ...
+```
+
+#### Custom Module Composition
+
+You can compose your own module from multiple libraries:
+
+```python
+# my_game_utils.pyco - custom module
+from math import sin, cos           # Statically included
+from physics import update_pos
+from gfx import draw_sprite
+
+def rotate(x: int, y: int, angle: float) -> int:
+    return int(x * cos(angle) - y * sin(angle))
+```
+
+In the main program, you can load it dynamically:
+
+```python
+def game_screen():
+    from my_game_utils import sin, cos, rotate, draw_sprite
+    # Everything in one module, one load
+```
+
+#### Include vs Import Comparison
+
+| Keyword                | What it does                     | When to use                            |
+| ---------------------- | -------------------------------- | -------------------------------------- |
+| `include("name")`      | Textually inserts the file       | Sharing constants, definitions         |
+| `from X import a, b`   | Loads from compiled module       | Using functions, classes               |
 
 ### 2.7 Constants
 

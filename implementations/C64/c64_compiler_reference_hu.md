@@ -1,236 +1,45 @@
-# C64 fordító referencia
+# C64 Compiler Reference
 
-Ez a dokumentum a PyCo C64 (6502) backend specifikus funkcióit írja le.
+Ez a dokumentum a PyCo C64 (6502) compiler implementációjának technikai referenciája.
 
-## Dekorátorok
+## 1. Bevezetés
 
-A `main()` függvény speciális dekorátorokkal módosítható, amik a C64-specifikus viselkedést befolyásolják.
+### Mi ez a dokumentum?
 
-### @lowercase
+Ez a referencia a **PyCo C64 compiler** platformspecifikus működését dokumentálja. A dokumentum a [Nyelvi referenciával](../../language-reference/language_reference_hu.md) együtt olvasandó:
 
-Kisbetűs/nagybetűs karakterkészlet módba kapcsolja a képernyőt.
+| Dokumentum                 | Tartalom                                                         |
+| -------------------------- | ---------------------------------------------------------------- |
+| **Nyelvi referencia**      | PyCo szintaxis, típusok, nyelvi konstrukciók (platformfüggetlen) |
+| **C64 Compiler Reference** | C64-specifikus implementáció, memóriakezelés, optimalizációk     |
 
-```python
-@lowercase
-def main():
-    print("Hello World!")  # Kisbetűkkel jelenik meg
-```
+### A C64 compiler jellemzői
 
-A C64 alapértelmezetten nagybetűs/grafikus módban indul. A `@lowercase` dekorátor kisbetűs/nagybetűs módba kapcsolja, ahol a kisbetűk is megjelennek.
+A PyCo C64 compiler 6502 assembly kódot generál a Commodore 64-re. Főbb jellemzők:
 
-### @kernal
+- **Kick Assembler** vagy **beépített assembler** kimenet
+- **Kernal-mentes mód** alapértelmezetten (+16KB RAM)
+- **Zero Page optimalizált** temp regiszterek
+- **Software stack** a lokális változókhoz
+- **Dead Code Elimination** - csak a használt kód kerül a binárisba
 
-Kernal ROM engedélyezése (legacy mód). Alapértelmezetten a PyCo **kikapcsolja a Kernal ROM-ot** (+8KB RAM), a `@kernal` dekorátor megtartja aktívként.
-
-```python
-@kernal
-def main():
-    # Kernal ROM aktív - $FFD2, $FFE4 stb. elérhető
-    pass
-```
-
-**Különbségek:**
-
-| Funkció                     | Alapértelmezett (Kernal OFF) | @kernal (Kernal ON)    |
-| --------------------------- | ---------------------------- | ---------------------- |
-| ROM beállítás               | $01 = $35 (mindkét ROM ki)   | $01 = $36 (BASIC ki)   |
-| print()                     | Saját screen rutin           | $FFD2 CHROUT           |
-| getkey() / waitkey()        | Saját keyboard rutin         | $FFE4 GETIN            |
-| @irq handler                | Rendszer IRQ-hoz láncolódik  | Direkt `rti`           |
-| Extra RAM                   | +8KB ($E000-$FFFF)           | Nincs extra            |
-
-**Mikor használd:**
-- Kernal rutinok közvetlen hívása (pl. floppy I/O)
-- Kompatibilitás régebbi kóddal
-- Teljes Kernal API elérése
-
-**Mikor NE használd:**
-- Ha nincs szükség Kernal-ra → több RAM, gyorsabb
-- Raster effektek → stabil timing a ROM nélkül
-
-### @noreturn
-
-A program soha nem tér vissza BASIC-be. A kilépési cleanup kód (ROM visszakapcsolás, I/O inicializálás, BASIC állapot visszaállítás) kimarad.
-
-```python
-@noreturn
-def main():
-    while True:
-        # Végtelen loop - soha nem lép ki
-        pass
-```
-
-**Generált kód:**
-- Normál program: cleanup + `rts`
-- @noreturn program: `jmp *` (végtelen loop)
-
-**Megtakarítás:** ~50-100 byte kimenő kód
-
-**Mikor használd:**
-- Demók, intro-k
-- Játékok amik soha nem lépnek ki
-- Végtelen loop programok
-
-**Kombinálható más dekorátorral:**
-
-```python
-@noreturn
-@lowercase
-def main():
-    # Kisbetűs mód + soha nem tér vissza
-    pass
-```
-
-### @relocate(address) - Függvény relokálása
-
-A `@relocate(address)` dekorátor lehetővé teszi, hogy egy függvény a megadott memóriacímre kerüljön futásidőben. A függvény fizikailag a program végén helyezkedik el, de a Kick Assembler `.pseudopc` direktívájával a célcímre van fordítva.
-
-**Használat:**
-
-```python
-@relocate(0xC000)
-def helper_function():
-    # Ez a kód $C000-ra kerül futáskor
-    pass
-```
-
-**Működés:**
-
-1. A dekorált függvények a program végére kerülnek, `.pseudopc` blokkban
-2. A program indulásakor (main() előtt) SMC-alapú gyors másoló átmásolja őket a célcímre
-3. **Az SSP (Software Stack Pointer) a felszabadult fizikai helyre áll** → több stack hely!
+### Fordítási folyamat
 
 ```
-Fordítás után:                        Futásidőben (main előtt):
-
-$0801 ┌────────────────────┐         $0801 ┌────────────────────┐
-      │ Fő program kód     │               │ Fő program kód     │
-      │                    │               │                    │
-$xxxx ├────────────────────┤         $xxxx ├────────────────────┤
-      │ Relokált függvények│               │ (felszabadult)     │ ← SSP ide mutat!
-      │ (.pseudopc blokk)  │               │ Stack használhatja │
-      │ [fizikai hely]     │               │                    │
-$yyyy └────────────────────┘         $yyyy └────────────────────┘
-
-                                     $C000 ┌────────────────────┐
-                                           │ Relokált függvények│
-                                           │ [már a célcímen!]  │
-                                     $C0xx └────────────────────┘
+source.pyco → Parser → Preprocessor → SemanticAnalyzer → CodeGen → output.asm
+                                              ↓
+                                        SymbolTable
 ```
 
-**Dinamikus régió-kiosztás:**
-
-Azonos célcímmel megadott függvények automatikusan egymás után kerülnek egyetlen `.pseudopc` blokkban:
-
-```python
-@relocate(0xC000)
-def helper1():      # → $C000-tól
-    print("*")
-
-@relocate(0xC000)   # Folytatja, nem felülír!
-def helper2():      # → helper1 után ($C0xx)
-    print("#")
-
-@relocate(0x0400)   # Külön régió
-def screen_helper():
-    pass
-```
-
-A fordító régiónként egy `.pseudopc` blokkot generál, és a startup kód minden régiót külön másolással helyez a célcímre.
-
-**Kombináció más dekorátorokkal:**
-
-A `@relocate` kombinálható más függvény-dekorátorokkal:
-
-```python
-# IRQ handler relokálása - fix címre
-@relocate(0xC100)
-@irq
-def raster_irq(vic: byte):
-    vic = 0x01
-    # ... raster effekt ...
-
-# Naked helper relokálása
-@relocate(0xC000)
-@naked
-def music_tick():
-    __asm__("""
-    jsr _mp_play
-    rts
-    """)
-```
-
-**Tipikus használati esetek:**
-
-| Cél terület       | Mikor használd                                        |
-| ----------------- | ----------------------------------------------------- |
-| `$C000-$CFFF`     | VIC Bank 3 szabad területe (4KB), leggyakoribb        |
-| `$0400-$07FF`     | Képernyő RAM, ha VIC bank != 0 (screen máshol van)    |
-| `$A000-$BFFF`     | BASIC ROM területe (ha ki van kapcsolva)              |
-| `$E000-$FFFF`     | Kernal ROM területe (ha ki van kapcsolva)             |
-
-**Előnyök:**
-
-- **Több stack hely** - a relokált kód fizikai helye felszabadul az SSP számára
-- **Jobb memóriakihasználás** - szétszórt szabad területek kihasználhatók
-- **Rezidens rutinok** - fix címen lévő kód, amit más programok is hívhatnak
-- **IRQ handlerek** - stabil címen, nem függ a program méretétől
-
-**Fontos tudnivalók:**
-
-| Szabály                        | Leírás                                                    |
-| ------------------------------ | --------------------------------------------------------- |
-| Csak top-level függvényeken    | Metódusokon (class-on belül) NEM használható              |
-| Nincs átfedés-ellenőrzés       | Advanced eszköz - a programozó felelőssége                |
-| Cím tartomány                  | $0000-$FFFF (16-bit)                                      |
-| Másolás sorrendje              | Alacsonyabb célcímű régiók előbb másolódnak               |
-
-**Generált assembly példa:**
-
-```asm
-; === RELOCATED FUNCTIONS ===
-__reloc_region_C000_src:
-.pseudopc $C000 {
-__F_helper1:
-    ; helper1 kódja...
-    rts
-__F_helper2:
-    ; helper2 kódja...
-    rts
-}
-__reloc_region_C000_size = * - __reloc_region_C000_src
-
-; === STARTUP (main előtt) ===
-    ; SMC-alapú gyors másolás (~9 ciklus/byte)
-    ldx #>__reloc_region_C000_size
-    beq .partial
-    ldy #0
-.page:
-.src:
-    lda __reloc_region_C000_src,y
-.dst:
-    sta $C000,y
-    iny
-    bne .page
-    inc .src+2
-    inc .dst+2
-    dex
-    bne .page
-.partial:
-    ; ... maradék byte-ok ...
-
-    ; SSP = relokált terület kezdete (felszabadult memória!)
-    lda #<__reloc_region_C000_src
-    sta ZP_SSP
-    lda #>__reloc_region_C000_src
-    sta ZP_SSP+1
-```
+A generált `.asm` fájl Kick Assembler szintaxisú, vagy a beépített assemblerrel közvetlenül `.prg` bináris készíthető.
 
 ---
 
-## Memória elrendezés
+## 2. Memória architektúra
 
-### Alapértelmezett mód (Kernal OFF)
+### 2.1 C64 memória térkép
+
+A PyCo alapértelmezetten **mindkét ROM-ot kikapcsolja** (+16KB RAM):
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -252,866 +61,115 @@ __reloc_region_C000_size = * - __reloc_region_C000_src
 └──────────────────────────────────────────────────────────────┘
 ```
 
-**Alapértelmezetten a PyCo mindkét ROM-ot kikapcsolja:**
-- BASIC ROM ($A000-$BFFF): +8KB RAM
-- Kernal ROM ($E000-$FFFF): +8KB RAM
-- **Összesen +16KB felszabadított memória!**
+A `@kernal` dekorátorral a Kernal ROM aktív marad (lásd [4.2 @kernal](#42-kernal)).
 
-A `@kernal` dekorátorral a Kernal ROM aktív marad (lásd [Dekorátorok](#kernal)).
+### 2.2 Zero Page kiosztás
 
----
-
-## Gyakran használt címek
-
-| Cím     | Név      | Leírás                  |
-| ------- | -------- | ----------------------- |
-| `$D020` | BORDER   | Keret színe             |
-| `$D021` | BGCOLOR  | Háttér színe            |
-| `$D012` | RASTER   | Aktuális rasztersor     |
-| `$DC00` | CIA1_PRA | Keyboard matrix / Joy 2 |
-| `$DC01` | CIA1_PRB | Keyboard matrix / Joy 1 |
-
----
-
-## PyCo Zero Page használat
-
-### Áttekintés
-
-```
-┌─────────────┬────────────────┬────────────────────────────────────┐
-│ Cím         │ Név            │ Leírás                             │
-├─────────────┼────────────────┼────────────────────────────────────┤
-│ $02-$07     │ tmp0-5         │ Általános temp regiszterek         │
-│ $08-$09     │ FP             │ Frame Pointer                      │
-│ $0A-$0B     │ SSP            │ Software Stack Pointer             │
-│ $0C-$0D     │ spbuf          │ Sprint buffer pointer              │
-│ $0E         │ sppos          │ Sprint buffer pozíció              │
-│ $0F-$12     │ retval         │ Return value (4 byte, float-hoz)   │
-│ $0F-$10     │ spsave         │ Sprint CHROUT (átfedés retval-lal) │
-│ $11         │ sptmp          │ Sprint temp (átfedés retval+2-vel) │
-│ $13-$15     │ tmp6-8         │ Kiterjesztett temp regiszterek     │
-│ $16-$17     │ ZP_SELF        │ Self pointer (metódusokhoz)        │
-│ $18-$19     │ scr_tmp0-1     │ Screen rutinok pointer (scroll)    │
-│ $1A-$1F     │ irq_tmp0-5     │ IRQ temp regiszterek (izoláció!)   │
-│ $20         │ putchar_save_y │ CHROUT Y regiszter mentés          │
-│ $21         │ irq_cia1_cache │ CIA1 IRQ cache (lazy reading)      │
-│ $22-$29     │ LEAF_ZP        │ Leaf function locals (8 byte)      │
-│ $2A-$56     │ ---            │ User-available (45 byte)           │
-│ $57-$5D     │ RESULT..       │ Float/szorzás munkaterület         │
-│ $61-$66     │ FAC            │ Float Accumulator                  │
-│ $69-$6E     │ ARG            │ Float Argument                     │
-├─────────────┼────────────────┼────────────────────────────────────┤
-│ $A0-$A2     │ TIME           │ Jiffy clock (Kernal-kompatibilis)  │
-│ $C5         │ LSTX           │ Utolsó billentyű matrix kódja      │
-│ $C6         │ NDX            │ Keyboard buffer count              │
-│ $D1-$D2     │ PNT            │ Screen line pointer                │
-│ $D3         │ PNTR           │ Cursor oszlop (0-39)               │
-│ $D6         │ TBLX           │ Cursor sor (0-24)                  │
-│ $F3-$F4     │ ---            │ Color RAM line pointer             │
-│ $0277-$0280 │ KEYD           │ Keyboard buffer (10 byte)          │
-│ $028C       │ KOUNT          │ Key repeat delay                   │
-│ $028D       │ SHFLAG         │ Shift/Ctrl/C= flags                │
-└─────────────┴────────────────┴────────────────────────────────────┘
-```
-
-### Részletes temp regiszter használat
-
-A temp regiszterek ($02-$07 és $13-$15) különböző műveleteknél kerülnek felhasználásra:
-
-#### tmp0-tmp5 ($02-$07) - Alapvető műveletek
-
-| Cím   | Label | Használat                                          |
-|-------|-------|----------------------------------------------------|
-| $02   | tmp0  | Általános temp, pointer low byte                   |
-| $03   | tmp1  | Általános temp, pointer high byte                  |
-| $04   | tmp2  | Szorzás/osztás operandus, loop counter             |
-| $05   | tmp3  | Szorzás/osztás operandus                           |
-| $06   | tmp4  | Összetett kifejezések, f16/f32 operandus           |
-| $07   | tmp5  | Összetett kifejezések, f16/f32 operandus           |
-
-**Mely műveletek használják:**
-- ✅ Byte/word aritmetika (+, -, *, &, |, ^, <<, >>)
-- ✅ Összehasonlítások (<, >, ==, !=, <=, >=)
-- ✅ Array indexelés (kis offset)
-- ✅ Pointer dereferálás
-- ✅ Változó hozzáférés
-
-#### tmp6-tmp8 ($13-$15) - Kiterjesztett műveletek
-
-| Cím   | Label | Használat                                          |
-|-------|-------|----------------------------------------------------|
-| $13   | tmp6  | Osztás, string műveletek, nagy offset számítás     |
-| $14   | tmp7  | Osztás, string műveletek, nagy offset számítás     |
-| $15   | tmp8  | String multiply, f32 műveletek                     |
-
-**Mely műveletek használják:**
-- ⚠️ Osztás (`/`) és modulo (`%`)
-- ⚠️ String konkatenáció (`+`)
-- ⚠️ String szorzás (`*`)
-- ⚠️ f16/f32 aritmetika
-- ⚠️ Bonyolult kifejezések (ha tmp0-5 nem elég)
-- ⚠️ Nagy array offset számítás
-
-### Stack és függvényhívás regiszterek
-
-| Cím       | Label   | Használat                                        |
-|-----------|---------|--------------------------------------------------|
-| $08-$09   | FP      | Frame Pointer - aktuális stack frame bázis       |
-| $0A-$0B   | SSP     | Software Stack Pointer - stack teteje            |
-| $0F-$12   | retval  | Függvény visszatérési érték (max 4 byte)         |
-| $16-$17   | ZP_SELF | `self` pointer metódushívásokhoz                 |
-
-### Print (sprint) regiszterek
-
-| Cím       | Label   | Használat                                        |
-|-----------|---------|--------------------------------------------------|
-| $0C-$0D   | spbuf   | Sprint buffer pointer                            |
-| $0E       | sppos   | Aktuális pozíció a bufferben                     |
-| $0F-$10   | spsave  | Mentett CHROUT vektor (átfedés retval-lal!)      |
-| $11       | sptmp   | Sprint temp (átfedés retval+2-vel!)              |
-
-> **Megjegyzés:** A `spsave` és `retval` átfedésben vannak, de soha nem aktívak egyszerre (print közben nincs függvény return).
-
-### Kernal-kompatibilis rendszerváltozók
-
-A Kernal-mentes mód ugyanazokat a memóriacímeket használja, mint a Kernal ROM, így a kilépés zökkenőmentes:
-
-| Cím         | Kernal név | Használat                                     |
-|-------------|------------|-----------------------------------------------|
-| $A0-$A2     | TIME       | Jiffy clock (1/60 sec, növekvő)               |
-| $C5         | LSTX       | Utolsó lenyomott billentyű matrix kódja       |
-| $C6         | NDX        | Keyboard buffer-ben lévő karakterek száma     |
-| $D1-$D2     | PNT        | Screen line pointer (aktuális sor címe)       |
-| $D3         | PNTR       | Cursor oszlop (0-39)                          |
-| $D6         | TBLX       | Cursor sor (0-24)                             |
-| $F3-$F4     | USER       | Color RAM line pointer                        |
-| $0277-$0280 | KEYD       | Keyboard buffer (10 byte)                     |
-| $028C       | KOUNT      | Key repeat delay counter                      |
-| $028D       | SHFLAG     | Shift/Ctrl/C= flag (bit 0=SHIFT, 1=C=, 2=CTRL)|
-
-> **Fontos:** A `$C5` (LSTX) változó biztosítja, hogy a kilépéskor még lenyomott billentyű ne kerüljön újra a bufferbe. Ha ezt nem ugyanazon a címen tárolnánk, a Kernal "új gombnak" látná.
-
-### Float regiszterek
-
-A float műveletek a BASIC ROM által is használt területet foglalják:
-
-| Cím       | Label     | Használat                                      |
-|-----------|-----------|------------------------------------------------|
-| $57-$59   | RESULT    | Szorzás eredmény (3 byte)                      |
-| $5A-$5B   | INDEX     | Memory pointer                                 |
-| $5C       | SGNCPR    | Előjel összehasonlítás                         |
-| $5D       | SHIFTSIGN | Shift előjel kiterjesztés                      |
-| $61-$66   | FAC       | Float Accumulator (exponens + mantissza + jel) |
-| $69-$6E   | ARG       | Float Argument (második operandus)             |
-
-### Leaf Function lokális változók (LEAF_ZP)
-
-A "leaf" függvények (amelyek nem hívnak más függvényt) lokális változói a Zero Page $22-$29 területén tárolódnak az SSP/FP alapú stack helyett. Ez jelentős méret- és sebességmegtakarítást eredményez.
-
-| Cím       | Label      | Használat                                       |
-|-----------|------------|-------------------------------------------------|
-| $22-$29   | LEAF_ZP    | Leaf függvény lokális változók (max 8 byte)     |
-
-#### Optimalizáció feltételei
-
-Egy függvény akkor használ LEAF_ZP módot, ha:
-1. **Leaf függvény** - nem hív más függvényt (kivéve runtime helper-ek)
-2. **Nincs paramétere** - paraméterek SSP-n keresztül jönnek
-3. **Lokális változók mérete ≤ 8 byte** - belefér a LEAF_ZP területre
-4. **Nem IRQ handler** - `@irq`, `@irq_raw`, `@irq_hook`, `@irq_helper` nem használja
-5. **Nem `@naked`** - naked függvények nem kapnak automatikus kódot
-6. **Nem `@mapped`** - külső címre mutatnak
-
-#### Megtakarítás
-
-| Megközelítés | Prologue  | Hozzáférés        | Epilogue  | Összes   |
-|--------------|-----------|-------------------|-----------|----------|
-| SSP/FP       | ~25 byte  | `ldy #N; (FP),y`  | ~15 byte  | ~40 byte |
-| LEAF_ZP      | 0 byte    | `lda $xx`         | 0 byte    | 0 byte   |
-
-**Sebesség:**
-- ZP hozzáférés: 3 ciklus (`lda $xx`)
-- SSP/FP hozzáférés: 7 ciklus (`ldy #N` + `lda (FP),y`)
-
-#### Példa
-
-```python
-def leaf_func() -> byte:
-    x: byte = 5
-    y: byte = 10
-    return x + y
-```
-
-**Generált assembly (LEAF_ZP módban):**
-```asm
-__F_leaf_func:
-    ; Leaf function: 2 bytes in ZP $22-$23
-    lda #5
-    sta $22        ; x
-    lda #10
-    sta $23        ; y
-    clc
-    lda $22
-    adc $23
-    sta retval
-    rts            ; Nincs epilogue!
-```
-
-> **Megjegyzés:** A LEAF_ZP terület megosztott az összes leaf függvény között, mivel egyszerre csak egy futhat. Rekurzió vagy függvényhívás megszakítaná ezt a garanciát.
-
-### IRQ handler-ek (`@irq`, `@irq_raw`, `@irq_hook`, `@irq_helper` dekorátorok)
-
-Az `@irq`, `@irq_raw` és `@irq_hook` dekorátorral jelölt függvények megszakítás-kezelőként működnek.
-Az `@irq_helper` segédfüggvényekhez való, amelyeket IRQ handlerből hívunk.
-
-#### @irq vs @irq_raw vs @irq_hook vs @irq_helper
-
-| Tulajdonság         | @irq                          | @irq_raw                    | @irq_hook                     | @irq_helper                   |
-| ------------------- | ----------------------------- | --------------------------- | ----------------------------- | ----------------------------- |
-| IRQ vector          | $FFFE/$FFFF (hardver)         | $FFFE/$FFFF (hardver)       | $0314/$0315 (Kernal szoftver) | N/A (nem IRQ handler)         |
-| Prologue/epilogue   | A/X/Y mentés + `rti`          | A/X/Y mentés + `rti`        | Nincs + `jmp $ea31`           | Csak `rts` (stack ha kell)    |
-| Rendszer IRQ lánc   | Igen (alapért. módban)        | Soha                        | N/A (Kernal kezeli)           | N/A                           |
-| Temp regiszterek    | irq_tmp0-5                    | irq_tmp0-5                  | irq_tmp0-5                    | irq_tmp0-5                    |
-| Paraméterek         | vic, cia1, cia2               | vic, cia1, cia2             | vic, cia1, cia2               | Nincs (ZP-n keresztül)        |
-| Használat           | Általános IRQ-k               | Időkritikus/bare metal      | Kernal hook (leggyorsabb)     | IRQ-ból hívható helper        |
-
-**@irq:** Teljes IRQ handler A/X/Y mentéssel. Alapértelmezett módban a rendszer IRQ-hoz láncolódik.
-
-**@irq_raw:** Teljes IRQ handler, de soha nem láncolódik a rendszer IRQ-hoz.
-
-**@irq_hook:** Könnyűsúlyú hook a Kernal szoftver IRQ vectorhoz ($0314/$0315). A Kernal már elmentette A/X/Y-t, így nincs szükség prologue-ra. A handler végén `JMP $EA31`-re ugrik, ami a Kernal alapértelmezett IRQ kezelője (keyboard, jiffy clock, RTI).
-
-**@irq_helper:** Segédfüggvény IRQ handlerből való híváshoz. `irq_tmp0-5` regisztereket használ (mint az IRQ handlerek), de nincs A/X/Y mentés (a hívó `@irq` handler már megtette). Ha csak memory-mapped változókat használ, nincs prologue - ha vannak stack változók, stack frame setup generálódik. Visszatérés: `rts`.
-
-> **Miért JMP és nem RTS az @irq_hook-nál?** A Kernal `JMP ($0314)`-et használ a hook meghívására, nem `JSR`-t! Ezért nincs visszatérési cím a stack-en, és az `RTS` hibás címre ugrana.
-
-**@kernal mód:** Az `@irq` és `@irq_raw` direkt `rti`-t használ, nincs láncolás. Az `@irq_hook` és `@irq_helper` változatlan.
-
-```python
-# Általános IRQ - keyboard működik
-@irq
-def raster_handler():
-    vic_irq: byte[0xD019]
-    vic_irq = 0xFF
-
-# Bare metal IRQ - teljes kontroll
-@irq_raw
-def timing_critical_handler():
-    vic_irq: byte[0xD019]
-    vic_irq = 0xFF  # Gyorsabb, de keyboard nem működik!
-
-# Kernal hook - leggyorsabb, keyboard automatikusan működik
-@irq_hook
-def frame_counter():
-    frame_count: byte[0x02F0]
-    frame_count = frame_count + 1  # Nincs prologue/epilogue overhead!
-
-# IRQ helper - joystick kezelés külön függvényben
-@irq_helper
-def joy_handler():
-    joy_port: byte[0xDC00]         # Memory-mapped - nincs stack
-    kbd_buffer: array[byte, 10][0x0277]
-    # ... joystick logika irq_tmp regiszterekkel
-```
+A Zero Page ($00-$FF) a 6502 processzor leggyorsabb memóriaterülete. A PyCo a következőképpen osztja ki:
 
 #### Temp regiszterek
 
-Az IRQ **bármikor** megszakíthatja a főprogramot - beleértve amikor épp temp regisztereket használ. Ezért az IRQ handler **külön ZP területet** használ:
+| Cím     | Név        | Használat                                |
+| ------- | ---------- | ---------------------------------------- |
+| $02-$07 | tmp0-5     | Általános temp regiszterek               |
+| $13-$15 | tmp6-8     | Kiterjesztett temp (osztás, string, f32) |
+| $1A-$1F | irq_tmp0-5 | IRQ handler temp regiszterek             |
 
-| Normál kontextus | IRQ kontextus   | Használat                      |
-|------------------|-----------------|--------------------------------|
-| $02-$07 (tmp0-5) | $1A-$1F         | Alapvető műveletek             |
-| $13-$15 (tmp6-8) | (nem helyettesítve) | Kerülendő IRQ-ban!         |
+**tmp0-tmp5 ($02-$07)** - Alapvető műveletek:
+- Byte/word aritmetika (+, -, *, &, |, ^, <<, >>)
+- Összehasonlítások (<, >, ==, !=, <=, >=)
+- Array indexelés, pointer dereferálás
+- Változó hozzáférés
 
-**Fontos:** A tmp6-8 ($13-$15) nem kerül automatikusan helyettesítésre IRQ-ban! Ezek osztáshoz, f16/f32-höz és string műveletekhez kellenek - ezek a műveletek **tiltottak** IRQ handlerben a szemantikai ellenőrző által.
+**tmp6-tmp8 ($13-$15)** - Kiterjesztett műveletek:
+- Osztás (`/`) és modulo (`%`)
+- String konkatenáció és szorzás
+- f16/f32 aritmetika
+- Nagy array offset számítás
 
-#### Lokális változók
+#### Stack és függvényhívás regiszterek
 
-Az IRQ handler a **software stack-et** használja lokális változókhoz - UGYANAZT mint a főprogram! De **NEM módosítja** sem az SSP-t, sem az FP-t. Ehelyett közvetlenül az `(SSP) + offset` címet használja.
+| Cím     | Név     | Használat                             |
+| ------- | ------- | ------------------------------------- |
+| $08-$09 | FP      | Frame Pointer - stack frame bázis     |
+| $0A-$0B | SSP     | Software Stack Pointer - stack teteje |
+| $0F-$12 | retval  | Függvény visszatérési érték (4 byte)  |
+| $16-$17 | ZP_SELF | `self` pointer metódushívásokhoz      |
 
-```
-IRQ belépéskor:                      IRQ közben:
-┌─────────────┐                      ┌─────────────┐
-│  (szabad)   │                      │ IRQ lokális │ ← (SSP) + 4 + offset
-├─────────────┤ ← SSP                │  változók   │
-│  főprogram  │                      ├─────────────┤ ← (SSP) + 4
-│  változói   │                      │  (4 byte    │
-└─────────────┘                      │   védőzóna) │
-                                     ├─────────────┤ ← SSP (változatlan!)
-                                     │  főprogram  │
-                                     │  változói   │
-                                     └─────────────┘
-```
+#### Print (sprint) regiszterek
 
-**Miért +4 byte védőzóna?** A főprogram max 4 byte-ot ír egyszerre az SSP-re (float paraméter). Ha az IRQ pont akkor jön, a +4 offset garantálja, hogy nem írjuk felül.
+| Cím     | Név    | Használat                        |
+| ------- | ------ | -------------------------------- |
+| $0C-$0D | spbuf  | Sprint buffer pointer            |
+| $0E     | sppos  | Aktuális pozíció a bufferben     |
+| $0F-$10 | spsave | Mentett CHROUT vektor (átfedés!) |
+| $11     | sptmp  | Sprint temp (átfedés!)           |
 
-**Optimalizáció:** Ha `frame_size == 0` (nincs stack-alapú lokális változó), csak A/X/Y mentés kell (~15 ciklus)!
+> **Megjegyzés:** A `spsave` és `retval` átfedésben vannak, de soha nem aktívak egyszerre.
 
-#### IRQ paraméterek - Interrupt flag regiszterek olvasása
+#### Float regiszterek
 
-Az IRQ handlerek speciális paramétereket kaphatnak, amelyek az interrupt flag regiszterek értékét tartalmazzák. Ezek a paraméterek **olvashatók ÉS írhatók** - valójában a háttérben mapped változóként működnek:
+A float regiszterek megegyeznek a C64 BASIC ROM által használt címekkel. Ez lehetővé teszi a kompatibilitást, de egyben azt is jelenti, hogy a BASIC ROM float rutinjai nem használhatók közvetlenül (a PyCo 32-bit MBF formátumot használ, míg a BASIC 40-bit MBF-et).
 
-| Paraméter | Regiszter | Leírás                                                         | Olvasás               | Írás                 |
-| --------- | --------- | -------------------------------------------------------------- | --------------------- | -------------------- |
-| `vic`     | $D019     | VIC-II interrupt flag (bit 0 = raster)                         | Közvetlen             | Közvetlen            |
-| `cia1`    | $DC0D     | CIA1 interrupt control (bit 0 = Timer A, bit 1 = Timer B, ...) | **Lazy cache**        | Közvetlen            |
-| `cia2`    | $DD0D     | CIA2 interrupt control (ugyanaz mint CIA1)                     | Közvetlen             | Közvetlen            |
+| Cím     | Név       | Használat                              |
+| ------- | --------- | -------------------------------------- |
+| $57-$5D | RESULT... | Szorzás/memory munkaterület            |
+| $61-$66 | FAC       | Float Accumulator (exponens+mantissza) |
+| $69-$6E | ARG       | Float Argument (második operandus)     |
 
-**Fontos különbségek:**
-- **VIC ($D019):** Olvasás NEM törli az értéket → közvetlen hozzáférés biztonságos, többször olvasható
-- **CIA1 ($DC0D):** Olvasás TÖRLI az értéket, ÉS a belső rutin (keyboard scan) is használja → lazy cache kötelező
-- **CIA2 ($DD0D):** Olvasás TÖRLI az értéket, DE belső rutin nem használja → közvetlen (user felelőssége)
+> **Tipp:** Ha a program nem használ `float` típust, a $57-$6E terület (24 byte) szabadon használható memory-mapped változóknak. Ez jelentős extra Zero Page terület játékokhoz és demókhoz!
 
-```python
-@irq
-def raster_handler(vic: byte, cia1: byte):
-    # Ellenőrzés: melyik interrupt jött?
-    if vic & 0x01:
-        # VIC raster interrupt - vissza kell igazolni!
-        vic = 0x01  # Acknowledge - közvetlenül $D019-be ír
-        # raster logika...
+#### Leaf function lokális változók
 
-    if cia1 & 0x01:
-        # CIA1 Timer A interrupt
-        # A cia1 paraméter lazy reading-et használ, tehát
-        # a CIA1 regiszter CSAK MOST olvasódik be először!
-        pass
-```
+| Cím     | Név     | Használat                               |
+| ------- | ------- | --------------------------------------- |
+| $22-$29 | LEAF_ZP | Leaf függvény lokális változók (8 byte) |
 
-**Paraméterek írása:**
+A "leaf" függvények (amelyek nem hívnak más függvényt) lokális változói a Zero Page-en tárolódnak. Feltételek:
 
-A paraméterek írása közvetlenül a hardware regiszterbe megy, nem a stack-re. Ez kényelmessé teszi az interrupt acknowledge-t:
+1. Leaf függvény (nem hív más függvényt)
+2. Nincs paramétere
+3. Lokális változók mérete ≤ 8 byte
+4. Nem IRQ handler, nem `@naked`, nem `@mapped`
 
-```python
-@irq
-def handler(vic: byte, cia1: byte):
-    if vic & 0x01:
-        vic = 0x01      # → sta $D019 (VIC interrupt acknowledge)
-    if cia1 & 0x01:
-        cia1 = 0x7f     # → sta $DC0D (CIA interrupt mask írás)
-```
+**Megtakarítás:**
 
-**Miért mapped változóként működnek?**
+| Megközelítés | Prologue | Hozzáférés       | Epilogue |
+| ------------ | -------- | ---------------- | -------- |
+| SSP/FP       | ~25 byte | `ldy #N; (FP),y` | ~15 byte |
+| LEAF_ZP      | 0 byte   | `lda $xx`        | 0 byte   |
 
-A háttérben ezek a paraméterek speciális kezelést kapnak:
-- **Olvasás:** Cache-ből (lazy read a CIA1-nél, azonnali a többinél)
-- **Írás:** Közvetlenül a hardware regiszterbe (`sta $D019`, `sta $DC0D`, `sta $DD0D`)
+#### Kernal-kompatibilis rendszerváltozók
 
-Ez megszünteti a korábbi redundanciát, amikor külön mapped változót kellett deklarálni az íráshoz.
+A Kernal-mentes mód ugyanazokat a címeket használja, így a kilépés zökkenőmentes:
 
-**Lazy reading optimalizáció (CIA1):**
+| Cím         | Kernal név | Használat                     |
+| ----------- | ---------- | ----------------------------- |
+| $A0-$A2     | TIME       | Jiffy clock (1/60 sec)        |
+| $C5         | LSTX       | Utolsó billentyű matrix kódja |
+| $C6         | NDX        | Keyboard buffer count         |
+| $D1-$D2     | PNT        | Screen line pointer           |
+| $D3         | PNTR       | Cursor oszlop (0-39)          |
+| $D6         | TBLX       | Cursor sor (0-24)             |
+| $0277-$0280 | KEYD       | Keyboard buffer (10 byte)     |
+| $028C       | KOUNT      | Key repeat delay              |
+| $028D       | SHFLAG     | Shift/Ctrl/C= flags           |
 
-A `cia1` paraméter **lazy reading**-et használ, ami ~7 ciklust takarít meg raszter IRQ-knál:
+#### Felhasználó számára szabad területek
 
-1. A prologue inicializál egy cache-t (`irq_cia1_cache = $80`)
-2. A CIA1 regiszter **CSAK akkor** olvasódik be, ha:
-   - A user kód használja a `cia1` paramétert, VAGY
-   - Az epilogue dönti el, kell-e system handler hívás
-3. Raszter IRQ-nál, ha a VIC kód hamarabb fut és return-öl, a CIA1 soha nem olvasódik!
+| Cím     | Méret   | Leírás                                   |
+| ------- | ------- | ---------------------------------------- |
+| $2A-$56 | 45 byte | PyCo által nem használt terület          |
+| $FB-$FE | 4 byte  | Commodore dokumentáció szerint is szabad |
 
-**Ciklus megtakarítás:**
-| Eset | Régi (azonnal) | Új (lazy) | Megtakarítás |
-|------|----------------|-----------|--------------|
-| Prologue | 25 ciklus | 18 ciklus | **7 ciklus** |
-| Raszter IRQ (nincs CIA ellenőrzés) | N/A | +0 ciklus | **~12 ciklus!** |
+> **Megjegyzés:** A $FB-$FE terület a Commodore Programmer's Reference Guide-ban is "Free for user programs" jelöléssel szerepel. Ez a 4 byte különösen hasznos memory-mapped változóknak vagy gyors ZP pointereknek.
 
-**Fontos:**
-- A paraméter nevek számítanak, a sorrend mindegy
-- Mindegyik paraméter opcionális - csak a deklaráltak olvasódnak be
-- A `vic` regiszter azonnal olvasódik (nem törlődik olvasáskor)
-- **KRITIKUS:** A CIA regiszterek olvasása TÖRLI a flaget! A lazy cache megoldja
-
-**Generált kód példa (lazy reading):**
-```asm
-// IRQ prologue: save A/X/Y
-pha
-txa
-pha
-tya
-pha
-// Initialize CIA1 cache (lazy reading)
-lda #$80                  ; $80 = "még nem olvasva" marker
-sta irq_cia1_cache
-// Read VIC $D019 -> vic at (SSP)+4  (azonnal, biztonságos)
-lda $d019
-ldy #4
-sta (SSP),y
-
-; ... user code: if vic & 0x01: ... (gyors, nincs CIA olvasás)
-
-; Ha a user code használja a cia1 paramétert:
-; Lazy read CIA: check cache first
-lda irq_cia1_cache
-bpl __cia_cache_ok        ; bit 7 clear = már olvasva
-lda $dc0d                 ; első olvasás: CIA1 beolvasása
-sta irq_cia1_cache        ; cache-elés
-__cia_cache_ok:
-; A regiszter most a cache-elt értéket tartalmazza
-
-; IRQ epilogue: ellenőrzi a cache-t a system handler döntéshez
-lda irq_cia1_cache
-bpl __cache_valid         ; ha már volt olvasva, cache-ből dolgozik
-lda $dc0d                 ; ha nem volt olvasva, most olvassa
-sta irq_cia1_cache
-__cache_valid:
-and #$01                  ; CIA1 Timer A IRQ?
-beq __skip_system
-jmp __R_system_irq_tail   ; keyboard scan, stb.
-__skip_system:
-pla / tay / pla / tax / pla / rti
-```
-
-#### Változó típusok IRQ-ban
-
-A user választhat a sebesség és kényelem között:
-
-| Változó típus | Sebesség | Használat |
-|---------------|----------|-----------|
-| Memory-mapped (`x: byte[$1A]`) | ⚡ Leggyorsabb | Abszolút címzés, 3 ciklus |
-| Stack-alapú (`x: byte`) | 🐢 Kicsit lassabb | `(SSP)+offset` címzés, 5-6 ciklus |
-
-**Ajánlás:** Időkritikus IRQ-kban (raster effektek) használj mapped változókat!
-
-#### Generált kód
-
-**Minimális IRQ (frame_size == 0, csak mapped változók):**
-```asm
-irq_handler:
-    pha                            ; 3 ciklus
-    txa
-    pha                            ; 3 ciklus
-    tya
-    pha                            ; 3 ciklus  (összesen ~15 ciklus)
-
-    ; ... IRQ kód (IRQ temp regiszterekkel) ...
-
-    pla
-    tay
-    pla
-    tax
-    pla                            ; ~15 ciklus
-    rti
-```
-
-**IRQ stack változókkal (frame_size > 0):**
-```asm
-irq_handler:
-    pha / txa / pha / tya / pha    ; A/X/Y mentés
-
-    ; Lokális változók: (SSP) + 4 + offset
-    ; Az SSP NEM módosul, az FP NEM módosul!
-    ldy #4+offset                  ; +4 a védőzóna
-    lda (SSP),y                    ; Olvasás
-    sta (SSP),y                    ; Írás
-
-    ; ... IRQ kód ...
-
-    pla / tay / pla / tax / pla    ; A/X/Y visszaállítás
-    rti
-```
-
-> **Megjegyzés:** Az IRQ handler NEM módosítja az SSP-t és FP-t! Közvetlenül `(SSP) + 4 + offset` címzést használ. A +4 védőzóna megvédi a főprogram épp írt adatait.
-
-#### IRQ-ban TILOS műveletek (compiler ellenőrzi!)
-
-A compiler fordítási időben ellenőrzi ezeket a szabályokat:
-
-| Művelet                       | Hibaüzenet                             | Miért tilos?                           |
-| ----------------------------- | -------------------------------------- | -------------------------------------- |
-| `float`, `f16`, `f32` típusok | "Float type not allowed in @irq"       | FAC/ARG ($61-$6E) nem mentődik         |
-| `print()`                     | "print() not allowed in @irq"          | spbuf/spsave nem mentődik              |
-
-#### IRQ-ban ENGEDÉLYEZETT műveletek
-
-- ✅ `byte`, `word`, `int`, `char`, `bool` típusok (aritmetika, bitműveletek)
-- ✅ Összehasonlítások, feltételek, ciklusok
-- ✅ Memory-mapped változók (`x: byte[0xD020]`)
-- ✅ Array/subscript hozzáférés
-- ✅ `__sei__()`, `__cli__()`, `__inc__()`, `__dec__()` intrinsics
-- ✅ `__asm__()` inline assembly
-- ✅ `addr()`, `size()` compile-time függvények
-- ✅ **Függvényhívás** (overhead-del, lásd alább)
-- ✅ **@naked függvényhívás** (overhead nélkül)
-
-#### Függvényhívás IRQ-ból
-
-Az IRQ handlerből normál függvények is hívhatók, de jelentős overhead-del járnak (~100-120 ciklus):
-
-```asm
-; Prologue: Főprogram állapotának mentése
-pha                     ; tmp0-tmp5 mentése (6 byte)
-pha
-...
-pha                     ; FP, SSP mentése (4 byte)
-pha
-...                     ; SSP/FP beállítás
-
-jsr __F_some_function   ; Tényleges függvényhívás
-
-; Epilogue: Állapot visszaállítása
-pla                     ; FP, SSP visszaállítás
-pla
-...
-pla                     ; tmp0-tmp5 visszaállítás
-```
-
-Ez az overhead **minden** normál függvényhívásra vonatkozik IRQ-ból. Ha a hívott függvény nem használ PyCo runtime-ot (FP, SSP, tmp regiszterek), ez felesleges overhead!
-
-#### @naked dekorátor - IRQ-barát függvények
-
-A `@naked` dekorátor jelzi a compilernek, hogy a függvény IRQ-ból hívható az overhead nélkül. Tipikus használati eset: zenelejátszó tick függvények.
-
-```python
-@naked
-def music_tick():
-    """Zene lejátszás egy tick-je. IRQ-ból hívandó."""
-    __asm__("""
-    jsr _mp_play
-    """)
-
-@irq
-def irq_handler(vic: byte):
-    if vic & 0x01:
-        music_tick()   # Csak JSR - nincs IRQ overhead!
-```
-
-**Generált kód összehasonlítás:**
-
-| Normál függvényhívás IRQ-ból                    | @naked függvényhívás IRQ-ból |
-| ----------------------------------------------- | ---------------------------- |
-| tmp0-tmp5 mentése hardware stack-re (~18 cyc)   | —                            |
-| FP/SSP mentése hardware stack-re (~12 cyc)      | —                            |
-| SSP/FP beállítás IRQ locals után (~25 cyc)      | —                            |
-| JSR függvény (6 cyc)                            | JSR függvény (6 cyc)         |
-| FP/SSP visszaállítás (~12 cyc)                  | —                            |
-| tmp0-tmp5 visszaállítás (~18 cyc)               | —                            |
-| **Összesen: ~91-120+ ciklus**                   | **Összesen: 6 ciklus**       |
-
-**Programozó felelőssége:** A `@naked` függvénynek magának kell gondoskodnia arról, hogy:
-- Nem rontja el a főprogram regisztereit
-- Ha tmp0-tmp5/FP/SSP-t használ, maga menti és állítja vissza
-
-**Szabályok:**
-
-| Szabály                   | Leírás                                             |
-| ------------------------- | -------------------------------------------------- |
-| Csak top-level            | Metódusokon nem használható                        |
-| Nem kombinálható @irq-val | @naked + @irq/irq_raw/irq_hook értelmetlen         |
-| Normál kontextusból is    | Nem-IRQ kontextusból is hívható                    |
-| Register-based paraméterek| A, X, Y regisztereken keresztül (max 3 slot)       |
-
-#### @naked paraméter átadás (Register-based ABI)
-
-A `@naked` függvények ugyanazt a register-based hívási konvenciót használják, mint a `@mapped` függvények. Ez lehetővé teszi gyors paraméter átadást stack overhead nélkül.
-
-**Regiszter kiosztás:**
-
-| Paraméterek          | Regiszterek    | Példa                      |
-| -------------------- | -------------- | -------------------------- |
-| `(byte)`             | A              | `music_disable_channel(2)` |
-| `(byte, byte)`       | A, X           | `setup_voice(ch, vol)`     |
-| `(byte, byte, byte)` | A, X, Y        | `set_rgb(r, g, b)`         |
-| `(word)`             | X (lo), Y (hi) | `set_address(addr)`        |
-| `(byte, word)`       | A, X/Y         | `load_data(bank, addr)`    |
-
-**Generált kód példa:**
-
-```python
-@naked
-def music_disable_channel(ch: byte):
-    __asm__("""
-    // ch paraméter az A regiszterben érkezik!
-    tax
-    lda channel_bit_mask, x
-    ...
-    rts
-    """)
-
-# Hívás helyén:
-music_disable_channel(2)
-```
-
-**Generált assembly:**
-
-```asm
-// Caller oldal:
-lda #2                          ; Paraméter → A
-jsr __F_music_disable_channel
-
-// Callee oldal (nincs prologue!):
-__F_music_disable_channel:
-    tax                         ; A → X
-    lda channel_bit_mask, x
-    ...
-    rts
-```
-
-**Visszatérési értékek:**
-
-| Típus | Regiszter       |
-| ----- | --------------- |
-| byte  | A               |
-| word  | X (lo), Y (hi)  |
-
-**Korlátok:**
-- Max 3 regiszter slot (A, X, Y)
-- Word paraméter 2 slot-ot foglal (X/Y)
-- 3 byte paraméternél word nem használható
-- `(word, byte)` sorrend nem támogatott - használj `(byte, word)` sorrendet
-
-#### IRQ handler beállítása
-
-##### `__set_irq__()` intrinsic (ajánlott)
-
-A legegyszerűbb módszer a `__set_irq__()` intrinsic használata, ami automatikusan:
-- Letiltja a megszakításokat (`sei`)
-- Beállítja a megfelelő IRQ vector-t a dekorátor alapján
-- Újra engedélyezi a megszakításokat (`cli`)
-
-```python
-@irq_hook
-def frame_counter():
-    frame_count: byte[0x02F0]
-    frame_count = frame_count + 1
-
-@irq
-def raster_handler():
-    vic_irq: byte[0xD019]
-    vic_irq = 0xFF
-
-def main():
-    __set_irq__(frame_counter)  # → $0314/$0315 (mert @irq_hook)
-    __set_irq__(raster_handler) # → $FFFE/$FFFF (mert @irq)
-```
-
-A `__set_irq__` automatikusan felismeri a dekorátor típust:
-
-| Dekorátor     | Beállított vector     |
-| ------------- | --------------------- |
-| `@irq`        | $FFFE/$FFFF (hardver) |
-| `@irq_raw`    | $FFFE/$FFFF (hardver) |
-| `@irq_hook`   | $0314/$0315 (Kernal)  |
-
-##### Manuális beállítás
-
-Az IRQ handler címét manuálisan is beállíthatjuk az `addr()` függvénnyel:
-
-```python
-@irq_hook
-def raster_handler():
-    vic_irq: byte[0xD019]
-    vic_irq = 0xFF  # Acknowledge
-
-def main():
-    irq_vector: word[0x0314]  # C64 Kernal IRQ vector
-
-    __sei__()                      # IRQ tiltás
-    irq_vector = addr(raster_handler)  # IRQ vector beállítása
-    __cli__()                      # IRQ engedélyezés
-```
-
-**Fontos címek:**
-
-| Cím           | Leírás                                   |
-| ------------- | ---------------------------------------- |
-| `$0314-$0315` | Kernal szoftver IRQ vector (írható RAM)  |
-| `$FFFE-$FFFF` | Hardware IRQ vector (ROM, nem írható)    |
-
-> **Megjegyzés:** A hardver vector ($FFFE/$FFFF) csak akkor írható, ha a Kernal ROM ki van kapcsolva (alapértelmezett mód).
-
-#### Példa: Raster scroll
-
-```python
-# Globális változó (a főprogram állítja)
-scroll_x: byte[0x02F0] = 0
-
-@irq
-def raster_handler():
-    vic_ctrl2: byte[0xD016]
-    vic_irq: byte[0xD019]
-
-    # Gyors - mapped változók, nincs stack
-    vic_ctrl2 = (vic_ctrl2 & 0xF8) | scroll_x
-    vic_irq = 0xFF  # Acknowledge
-```
-
-#### SSP védett frissítés (ha van IRQ a programban)
-
-**Probléma:** A 6502-n a 16-bites SSP frissítése nem atomi. Page boundary crossing esetén (pl. $10FF → $1100) az SSP ideiglenesen inkonzisztens lehet:
-
-```asm
-; Probléma: 16-bit inkonzisztencia
-lda SSP
-adc #8           ; A = $07, carry = 1
-sta SSP          ; SSP low = $07
-                 ; <<< IRQ ITT >>> SSP = $1007 (hibás! valódi: $10FF)
-inc SSP+1        ; SSP high = $11, most már OK
-```
-
-**Megoldás:** Ha a programban van `@irq` handler, a kódgenerátor **védett SSP frissítést** használ `php`/`plp`-vel:
-
-```asm
-; Védett SSP frissítés (php/plp megőrzi a user __sei__ állapotát)
-clc
-lda SSP
-adc #<frame_size
-bcc .no_carry       ; Ha nincs carry → biztonságos
-php                 ; Page crossing → mentsük az I flag-et!
-sei                 ; Védelem
-sta SSP
-inc SSP+1
-plp                 ; Visszaállítjuk az EREDETI I flag állapotot
-jmp .done
-.no_carry:
-sta SSP             ; Nincs carry, csak low byte változik
-.done:
-```
-
-**Miért `php`/`plp` és nem `sei`/`cli`?**
-
-Ha a user `__sei__()`-t hívott és utána függvényt hív, a sima `cli` visszakapcsolná az IRQ-t a user szándéka ellenére. A `php`/`plp` megőrzi az eredeti I flag állapotot:
-- Ha IRQ engedélyezve volt (I=0) → `plp` visszakapcsolja
-- Ha IRQ tiltva volt (I=1) → `plp` **tiltva hagyja**
-
-Ez működik importált library-kkal is, amik `__sei__()`/`__cli__()` párokat használhatnak.
-
-**Overhead:**
-- Nincs page crossing: **0 extra ciklus** (a `bcc` ugrik, `sta SSP` fut)
-- Page crossing: **+12 ciklus** (php + sei + plp + jmp)
-- Page crossing esélye: ~5-15% (frame_size / 256)
-
-> **Megjegyzés:** Ha nincs `@irq` a programban, a kódgenerátor a régi, egyszerű SSP frissítést használja (0 overhead).
-
-#### irq_safe wrapper típus
-
-Az `irq_safe` wrapper típus **atomi hozzáférést** biztosít memory-mapped változókhoz, amelyeket mind a főprogram, mind az IRQ handler használ. A fordító automatikusan `PHP`/`SEI`/`PLP` védelmet generál az olvasás és írás műveletekhez.
-
-**Szintaxis:**
-
-```python
-név: irq_safe[típus[cím]]
-```
-
-```python
-@singleton
-class Game:
-    score: irq_safe[word[0x00FB]]    # Atomi hozzáférés
-```
-
-**Probléma (irq_safe nélkül):**
-
-A többbájtos típusok (word, int) olvasása és írása több gépi utasítást igényel. Ha az IRQ pont középen szakítja meg a műveletet, "torn read/write" történik:
-
-```
-; Normál word írás - VESZÉLYES!
-    lda #$39
-    sta $FB          ; ← IRQ itt szakíthatja meg
-    lda #$30         ;   Az IRQ handler $30FB helyett $??39-et olvas!
-    sta $FC
-```
-
-**Megoldás (irq_safe-fel):**
-
-```
-; irq_safe word írás - BIZTONSÁGOS
-    php              ; Eredeti I flag mentése (3 ciklus)
-    sei              ; IRQ tiltás (2 ciklus)
-    lda #$39
-    sta $FB
-    lda #$30
-    sta $FC
-    plp              ; Eredeti I flag visszaállítása (4 ciklus)
-```
-
-**Miért PHP/PLP és nem SEI/CLI?**
-
-A `CLI` mindig engedélyezi az IRQ-t, de ha a user korábban `__sei__()`-t hívott:
-
-```python
-__sei__()               # User tiltja az IRQ-t valami okból
-Game.score = 12345      # irq_safe írás
-# Ha CLI-t használnánk, itt az IRQ újra engedélyezve lenne - BUG!
-__cli__()               # User itt akarta visszaengedélyezni
-```
-
-A `PLP` visszaállítja az **eredeti** I flag állapotot, így a user szándéka megmarad.
-
-**IRQ kontextus detektálás:**
-
-Az IRQ handlerekben (`@irq`, `@irq_raw`, `@irq_hook`) a védelem **automatikusan kimarad**, mert:
-
-1. A 6502 CPU automatikusan I=1-re állítja az IRQ belépéskor
-2. További SEI/CLI felesleges overhead lenne
-
-```python
-@irq_hook
-def raster_irq():
-    # Itt NEM generálódik PHP/SEI/PLP!
-    Game.score = Game.score + 10    # Közvetlen hozzáférés
-```
-
-**Támogatott típusok:**
-
-| Típus   | Méret    | Generált védelem                    |
-| ------- | -------- | ----------------------------------- |
-| `byte`  | 1 byte   | PHP/SEI/STA/PLP (konzisztencia)     |
-| `sbyte` | 1 byte   | PHP/SEI/STA/PLP (konzisztencia)     |
-| `word`  | 2 byte   | PHP/SEI/STA×2/PLP (kritikus!)       |
-| `int`   | 2 byte   | PHP/SEI/STA×2/PLP (kritikus!)       |
-
-> **Megjegyzés:** A `byte` típusnál technikailag nem szükséges a védelem (egyetlen utasítás), de a fordító mégis generálja a konzisztencia és jövőbiztonság érdekében.
-
-**Overhead:**
-
-| Művelet         | Extra ciklus | Megjegyzés                          |
-| --------------- | ------------ | ----------------------------------- |
-| irq_safe olvasás | +9 ciklus   | PHP (3) + SEI (2) + PLP (4)         |
-| irq_safe írás    | +9 ciklus   | PHP (3) + SEI (2) + PLP (4)         |
-| IRQ-ban          | +0 ciklus   | Védelem kimarad                     |
-
-**Generált kód példa:**
-
-```python
-# PyCo forrás
-@singleton
-class State:
-    counter: irq_safe[word[0x00FB]]
-
-def main():
-    x: word = State.counter    # olvasás
-    State.counter = 12345      # írás
-```
-
-```asm
-; irq_safe word olvasás
-    php
-    sei
-    lda $FB
-    sta tmp0
-    lda $FC
-    sta tmp1
-    plp
-    ; x = tmp0/tmp1
-
-; irq_safe word írás
-    php
-    sei
-    lda #$39          ; 12345 = $3039
-    sta $FB
-    lda #$30
-    sta $FC
-    plp
-```
-
----
-
-## Stack frame felépítése
-
-> **Megjegyzés:** Ez a szekció haladó téma - a legtöbb programozáshoz nem szükséges ismerni. Akkor lehet hasznos, ha debuggolsz, inline assembly-t írsz, vagy meg akarod érteni a generált kódot.
+### 2.3 Software Stack
 
 A C64-en a PyCo két stack-et használ:
-- **Software stack**: A paraméterek és lokális változók itt tárolódnak, az FP (Frame Pointer) segítségével érjük el őket
-- **Hardware stack** ($0100-$01FF): A 6502 processzor beépített verme, ide csak a visszatérési cím kerül (JSR automatikusan)
+
+- **Hardware stack** ($0100-$01FF): 6502 beépített verme - visszatérési címek
+- **Software stack**: Paraméterek és lokális változók
 
 ```
 Software stack:                      Hardware stack ($0100-$01FF):
@@ -1126,12 +184,886 @@ Software stack:                      Hardware stack ($0100-$01FF):
 │                         │
 │    Paraméterek          │
 │                         │
-└─────────────────────────┘ ← FP (Frame Pointer) ide mutat
+└─────────────────────────┘ ← FP (Frame Pointer)
                           ↑
                     SSP (stack teteje)
 ```
 
-A **Frame Pointer (FP)** egy fix pont, amihez képest a fordító eléri a paramétereket és lokális változókat. Az FP-t a hívó függvény újraszámolja minden hívás után (`FP = SSP - frame_size`), így nem kell a HW stack-re menteni. Ez 2.7× gyorsabb hívási konvenciót eredményez, és 2× több rekurzív hívást tesz lehetővé.
+A **Frame Pointer (FP)** egy fix pont, amihez képest a fordító eléri a változókat. Az FP-t a hívó függvény újraszámolja minden hívás után (`FP = SSP - frame_size`).
+
+---
+
+## 3. Generált kód
+
+### 3.1 Name mangling
+
+A generált assembly-ben a PyCo nevek prefixet kapnak:
+
+| Prefix | Jelentés       | Példa                 |
+| ------ | -------------- | --------------------- |
+| `__F_` | Függvény       | `__F_calculate_score` |
+| `__C_` | Class metódus  | `__C_Player_move`     |
+| `__B_` | BSS változó    | `__B_game_state`      |
+| `__R_` | Runtime helper | `__R_mul16`           |
+
+### 3.2 Hívási konvenció
+
+**Paraméter átadás:**
+
+1. Paraméterek a software stack-re kerülnek (jobbról balra)
+2. `JSR` a függvénybe
+3. A hívott függvény beállítja FP-t
+4. Visszatérési érték `retval`-ban ($0F-$12)
+
+**Register-based ABI (csak `@naked` és `@mapped`):**
+
+| Paraméterek          | Regiszterek    |
+| -------------------- | -------------- |
+| `(byte)`             | A              |
+| `(byte, byte)`       | A, X           |
+| `(byte, byte, byte)` | A, X, Y        |
+| `(word)`             | X (lo), Y (hi) |
+
+### 3.3 Típusok mérete
+
+| Típus | Méret  | Tartomány               |
+| ----- | ------ | ----------------------- |
+| bool  | 1 byte | 0, 1                    |
+| char  | 1 byte | PETSCII karakter        |
+| byte  | 1 byte | 0 - 255                 |
+| sbyte | 1 byte | -128 - 127              |
+| word  | 2 byte | 0 - 65535               |
+| int   | 2 byte | -32768 - 32767          |
+| f16   | 2 byte | Fix pont (8.8)          |
+| f32   | 4 byte | Fix pont (16.16)        |
+| float | 4 byte | 32-bit MBF lebegőpontos |
+
+---
+
+## 4. C64 dekorátorok
+
+A dekorátorok a függvények viselkedését módosítják. A C64 compiler speciális dekorátorokat biztosít.
+
+### 4.1 @lowercase
+
+Kisbetűs/nagybetűs karakterkészlet módba kapcsolja a képernyőt.
+
+```python
+@lowercase
+def main():
+    print("Hello World!")  # Kisbetűkkel jelenik meg
+```
+
+A C64 alapértelmezetten nagybetűs/grafikus módban indul. A `@lowercase` dekorátor kisbetűs/nagybetűs módba kapcsolja.
+
+### 4.2 @kernal
+
+Kernal ROM engedélyezése (legacy mód). Alapértelmezetten a PyCo **kikapcsolja a Kernal ROM-ot** (+8KB RAM).
+
+```python
+@kernal
+def main():
+    # Kernal ROM aktív - $FFD2, $FFE4 stb. elérhető
+    pass
+```
+
+**Különbségek:**
+
+| Funkció              | Alapértelmezett (Kernal OFF) | @kernal (Kernal ON)  |
+| -------------------- | ---------------------------- | -------------------- |
+| ROM beállítás        | $01 = $35 (mindkét ROM ki)   | $01 = $36 (BASIC ki) |
+| print()              | Saját screen rutin           | $FFD2 CHROUT         |
+| getkey() / waitkey() | Saját keyboard rutin         | $FFE4 GETIN          |
+| @irq handler         | Rendszer IRQ-hoz láncolódik  | Direkt `rti`         |
+| Extra RAM            | +8KB ($E000-$FFFF)           | Nincs extra          |
+
+**Mikor használd:**
+- Kernal rutinok közvetlen hívása (pl. floppy I/O)
+- Ha kritikus a fájlméret (kisebb PRG)
+
+**Mikor NE használd:**
+- Ha több RAM kell → +8KB ($E000-$FFFF)
+- Raster effektek → stabil timing a ROM nélkül
+
+**Fájlméret vs RAM trade-off:**
+
+| Mód             | print/getkey forrása      | PRG méret | Szabad RAM     |
+| --------------- | ------------------------- | --------- | -------------- |
+| `@kernal`       | Kernal ROM ($FFD2, $FFE4) | Kisebb    | ROM marad      |
+| Alapértelmezett | Beépített PyCo kód        | Nagyobb   | Nettó több RAM |
+
+A PyCo alapértelmezetten saját képernyő- és billentyűzetkezelő kódot fordít a programba. A $E000-$FFFF terület (8KB) felszabadul RAM-nak, és bár a saját rutinok foglalnak helyet, ezek kompaktabbak és gyorsabbak a Kernal rutinoknál.
+
+### 4.3 @noreturn
+
+A program soha nem tér vissza BASIC-be. A kilépési cleanup kód kimarad.
+
+```python
+@noreturn
+def main():
+    while True:
+        pass  # Végtelen loop
+```
+
+**Generált kód:**
+- Normál program: cleanup + `rts`
+- @noreturn program: `jmp *` (végtelen loop)
+
+**Megtakarítás:** ~50-100 byte
+
+### 4.4 @relocate(address)
+
+Függvény relokálása a megadott memóriacímre futásidőben.
+
+```python
+@relocate(0xC000)
+def helper_function():
+    # Ez a kód $C000-ra kerül futáskor
+    pass
+```
+
+**Működés:**
+
+1. A dekorált függvények a program végére kerülnek, `.pseudopc` blokkban
+2. A program indulásakor egy tábla-alapú másoló átmásolja őket a célcímre
+3. Az SSP a felszabadult fizikai helyre áll → több stack hely!
+
+```
+Fordítás után:                        Futásidőben (main előtt):
+
+$0801 ┌────────────────────┐         $0801 ┌────────────────────┐
+      │ Fő program kód     │               │ Fő program kód     │
+$xxxx ├────────────────────┤         $xxxx ├────────────────────┤
+      │ Relokált függvények│               │ (felszabadult)     │ ← SSP
+      │ [fizikai hely]     │               │                    │
+$yyyy └────────────────────┘         $yyyy └────────────────────┘
+
+                                     $C000 ┌────────────────────┐
+                                           │ Relokált függvények│
+                                     $C0xx └────────────────────┘
+```
+
+**Dinamikus régió-kiosztás:**
+
+Azonos célcímmel megadott függvények automatikusan egymás után kerülnek:
+
+```python
+@relocate(0xC000)
+def helper1():      # → $C000-tól
+    print("*")
+
+@relocate(0xC000)   # Folytatja, nem felülír!
+def helper2():      # → helper1 után
+    print("#")
+```
+
+**Tipikus használati esetek:**
+
+| Cél terület   | Mikor használd                                 |
+| ------------- | ---------------------------------------------- |
+| `$C000-$CFFF` | VIC Bank 3 szabad területe (4KB), leggyakoribb |
+| `$A000-$BFFF` | BASIC ROM területe (ha ki van kapcsolva)       |
+| `$E000-$FFFF` | Kernal ROM területe (ha ki van kapcsolva)      |
+
+> **Megjegyzés:** A `$0400-$07FF` (alapértelmezett képernyő RAM) elméletileg használható, ha a VIC bank != 0, de a másolás közben "szemét" jelenik meg a képernyőn. Érdemes inkább a `$C000-$CFFF` területet preferálni.
+
+**Fontos tudnivalók:**
+
+| Szabály                       | Leírás                       |
+| ----------------------------- | ---------------------------- |
+| Nincs átfedés-ellenőrzés      | A programozó felelőssége     |
+| Kombináció más dekorátorokkal | `@relocate` + `@irq` működik |
+
+### 4.5 @charset_rom(address)
+
+A C64 karakter ROM-ot (2KB) a megadott RAM címre másolja induláskor.
+
+```python
+@charset_rom(0xC800)  # 2KB ROM charset → $C800-$CFFF
+@lowercase
+def main():
+    # A charset már készen van!
+    pass
+```
+
+**Működés:**
+
+1. A startup kód SEI-vel letiltja az IRQ-t
+2. Átkapcsolja a CPU portot a character ROM eléréshez
+3. Átmásolja a 2KB-os ROM charset-et a célcímre
+4. Visszakapcsolja az I/O-t és CLI-vel engedélyezi az IRQ-t
+5. Ezután futnak a relokációk (ha vannak)
+
+**Kombináció `relocate[tuple[byte], address]`-tel:**
+
+A `@charset_rom` ELŐBB másolja a ROM-ot, a `relocate` tuple-ök UTÁNA felülírják az egyedi karaktereket:
+
+```python
+# Custom karakter 60 - felülírja a ROM-ot!
+char_60: relocate[tuple[byte], 0xC9E0] = (0x00, 0x3F, 0x7F, 0x7F, ...)
+
+@charset_rom(0xC800)
+@lowercase
+def main():
+    # ROM charset $C800-ra másolva, char 60 patch-elve
+    pass
+```
+
+### 4.6 IRQ dekorátorok
+
+Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5. IRQ kezelés](#5-irq-kezelés).
+
+| Dekorátor     | IRQ vector            | Használat                      |
+| ------------- | --------------------- | ------------------------------ |
+| `@irq`        | $FFFE/$FFFF (hardver) | Általános IRQ handler          |
+| `@irq_raw`    | $FFFE/$FFFF (hardver) | Bare metal, nincs láncolás     |
+| `@irq_hook`   | $0314/$0315 (Kernal)  | Leggyorsabb, Kernal hook       |
+| `@irq_helper` | N/A                   | Segédfüggvény IRQ-ból híváshoz |
+
+### 4.7 @naked
+
+Tisztán assembly-ben írt függvényekhez. A compiler csak egy címkét generál, semmi mást - nincs prologue, epilogue, vagy bármilyen PyCo overhead.
+
+```python
+@naked
+def sid_play():
+    __asm__("""
+    jsr $1003       // Külső zenelejátszó rutin
+    rts
+    """)
+
+def main():
+    sid_play()      // Egyszerű JSR _sid_play hívás
+```
+
+**Mikor használd:**
+- Külső könyvtárak (pl. zenemotor) wrapper függvényeihez
+- Teljes egészében assembly-ben írt rutinokhoz
+- Amikor a PyCo calling convention nem kell
+
+**Register-based paraméterek:**
+
+A naked függvények regiszterekben kapják a paramétereket:
+
+| Paraméterek          | Regiszterek    |
+| -------------------- | -------------- |
+| `(byte)`             | A              |
+| `(byte, byte)`       | A, X           |
+| `(byte, byte, byte)` | A, X, Y        |
+| `(word)`             | X (lo), Y (hi) |
+
+**Szabályok:**
+- A függvénynek magának kell gondoskodnia a regiszter megőrzésről
+- Nem kombinálható `@irq` dekorátorral
+
+> **Megjegyzés:** IRQ handler-ből való hatékony híváshoz lásd az `@irq_helper` dekorátort (5.4 fejezet).
+
+---
+
+## 5. IRQ kezelés
+
+### 5.1 Áttekintés
+
+A C64-en két IRQ vector van:
+
+| Vector       | Cím         | Trigger                           |
+| ------------ | ----------- | --------------------------------- |
+| Hardware IRQ | $FFFE/$FFFF | VIC-II raster, CIA timer          |
+| Kernal hook  | $0314/$0315 | Kernal által hívott szoftver hook |
+
+### 5.2 @irq vs @irq_raw vs @irq_hook vs @irq_helper
+
+| Tulajdonság       | @irq                   | @irq_raw             | @irq_hook           | @irq_helper |
+| ----------------- | ---------------------- | -------------------- | ------------------- | ----------- |
+| IRQ vector        | $FFFE/$FFFF            | $FFFE/$FFFF          | $0314/$0315         | N/A         |
+| Prologue/epilogue | A/X/Y mentés + `rti`   | A/X/Y mentés + `rti` | Nincs + `jmp $ea31` | Csak `rts`  |
+| Rendszer IRQ lánc | Igen (alapért. módban) | Soha                 | N/A (Kernal kezeli) | N/A         |
+| Temp regiszterek  | irq_tmp0-5             | irq_tmp0-5           | irq_tmp0-5          | irq_tmp0-5  |
+
+**@irq:** Teljes IRQ handler. Alapértelmezett módban a rendszer IRQ-hoz láncolódik (keyboard működik).
+
+**@irq_raw:** Teljes IRQ handler, de soha nem láncolódik. Teljes kontroll, de keyboard nem működik automatikusan.
+
+**@irq_hook:** Könnyűsúlyú hook a Kernal szoftver IRQ vectorhoz. A Kernal már elmentette A/X/Y-t, így nincs prologue. A handler végén `JMP $EA31`-re ugrik.
+
+> **Fontos:** Az `@irq_hook` csak a CIA system timer-hez alkalmas (zene lejátszás, frame számláló, stb.). Raster vagy más VIC interruptokhoz használj `@irq`-t vagy `@irq_raw`-t, mert a Kernal IRQ handler nem acknowledgeol VIC interruptokat és nem végez forrás-szűrést.
+
+**@irq_helper:** Segédfüggvény IRQ handlerből való híváshoz. `irq_tmp0-5` regisztereket használ.
+
+```python
+# Általános IRQ - keyboard működik
+@irq
+def raster_handler():
+    vic_irq: byte[0xD019]
+    vic_irq = 0xFF
+
+# Bare metal IRQ - teljes kontroll
+@irq_raw
+def timing_critical_handler():
+    vic_irq: byte[0xD019]
+    vic_irq = 0xFF
+
+# Kernal hook - legkisebb saját overhead
+@irq_hook
+def frame_counter():
+    frame_count: byte[0x02F0]
+    frame_count = frame_count + 1
+```
+
+### 5.3 IRQ paraméterek
+
+Az IRQ handlerek speciális paramétereket kaphatnak:
+
+| Paraméter | Regiszter | Leírás                 | Olvasás        |
+| --------- | --------- | ---------------------- | -------------- |
+| `vic`     | $D019     | VIC-II interrupt flag  | Közvetlen      |
+| `cia1`    | $DC0D     | CIA1 interrupt control | **Lazy cache** |
+| `cia2`    | $DD0D     | CIA2 interrupt control | Közvetlen      |
+
+> **Speciális:** A paraméterek sorrendje tetszőleges, és bármelyik elhagyható. A `(cia1: byte, vic: byte)` ugyanúgy működik, mint a `(vic: byte, cia1: byte)`, és a `(vic: byte)` is érvényes, ha csak VIC-et használsz.
+
+**Fontos különbségek:**
+- **VIC ($D019):** Olvasás NEM törli az értéket → többször olvasható
+- **CIA1 ($DC0D):** Olvasás TÖRLI az értéket → lazy cache kötelező
+- **CIA2 ($DD0D):** Olvasás TÖRLI az értéket → user felelőssége
+
+```python
+@irq
+def raster_handler(vic: byte, cia1: byte):
+    if vic & 0x01:
+        vic = 0x01  # Acknowledge - közvetlenül $D019-be ír
+        # raster logika...
+
+    if cia1 & 0x01:
+        # CIA1 Timer A interrupt
+        pass
+```
+
+**Paraméterek írása:** közvetlenül a hardware regiszterbe megy:
+
+```python
+@irq
+def handler(vic: byte, cia1: byte):
+    if vic & 0x01:
+        vic = 0x01      # → sta $D019
+    if cia1 & 0x01:
+        cia1 = 0x7f     # → sta $DC0D
+```
+
+**Lazy reading optimalizáció (CIA1):**
+
+A `cia1` paraméter lazy reading-et használ, ami ~7 ciklust takarít meg raszter IRQ-knál:
+
+1. A prologue inicializál egy cache-t (`irq_cia1_cache = $80`)
+2. A CIA1 regiszter CSAK akkor olvasódik be, ha a kód használja
+3. Az epilogue-ban (ha eléri) a CIA1 mindig olvasódik az acknowledge miatt
+
+**Korai return raszter IRQ-knál:**
+
+Ha `return`-t használsz a handler közepén (pl. gyors raszter effekthez), az epilogue nem fut le. Ha CIA1 is triggelt közben, az IRQ **azonnal újrahívódik** RTI után (a CIA1 /IRQ vonal LOW marad). Ez nem probléma - a következő hívásban kezelheted a CIA1-et, ha szükséges.
+
+### 5.4 Temp regiszterek
+
+Az IRQ bármikor megszakíthatja a főprogramot. Ezért az IRQ handler **külön ZP területet** használ:
+
+| Normál kontextus | IRQ kontextus | Használat          |
+| ---------------- | ------------- | ------------------ |
+| $02-$07 (tmp0-5) | $1A-$1F       | Alapvető műveletek |
+| $13-$15 (tmp6-8) | (nincs)       | Kerülendő IRQ-ban! |
+
+**Fontos:** A tmp6-8 nem kerül automatikusan helyettesítésre IRQ-ban! Ezek osztáshoz, f16/f32-höz és string műveletekhez kellenek - ezek **tiltottak** IRQ handlerben.
+
+### 5.5 Lokális változók IRQ-ban
+
+Az IRQ handler a software stack-et használja, de **NEM módosítja** az SSP-t és FP-t. Közvetlenül `(SSP) + 4 + offset` címet használ.
+
+```
+IRQ belépéskor:                      IRQ közben:
+┌─────────────┐                      ┌─────────────┐
+│  (szabad)   │                      │ IRQ lokális │ ← (SSP) + 4 + offset
+├─────────────┤ ← SSP                │  változók   │
+│  főprogram  │                      ├─────────────┤ ← (SSP) + 4
+│  változói   │                      │  (4 byte    │
+└─────────────┘                      │   védőzóna) │
+                                     ├─────────────┤ ← SSP (változatlan!)
+                                     │  főprogram  │
+                                     └─────────────┘
+```
+
+**Miért +4 byte védőzóna?** A főprogram max 4 byte-ot ír egyszerre (float paraméter), SSP módosítás nélkül. A +4 offset garantálja, hogy nem írjuk felül.
+
+### 5.6 IRQ-ban TILOS műveletek
+
+A compiler fordítási időben ellenőrzi:
+
+| Művelet                       | Hibaüzenet                       | Miért tilos?              |
+| ----------------------------- | -------------------------------- | ------------------------- |
+| `float`, `f16`, `f32` típusok | "Float type not allowed in @irq" | FAC/ARG nem mentődik      |
+| `print()`                     | "print() not allowed in @irq"    | spbuf/spsave nem mentődik |
+
+**IRQ-ban ENGEDÉLYEZETT:**
+- `byte`, `word`, `int`, `char`, `bool` típusok
+- Összehasonlítások, feltételek, ciklusok
+- Memory-mapped változók
+- Array/subscript hozzáférés
+- `__sei__()`, `__cli__()`, `__inc__()`, `__dec__()`, `__asm__()`
+- Függvényhívás (normál függvények is!) és `@naked`/`@irq_helper` hívás
+
+**Normál függvények hívása IRQ-ból:**
+
+Az IRQ handler hívhat normál függvényeket is! A compiler automatikusan generálja a szükséges wrapper kódot:
+
+```python
+def calculate_score(base: word, multiplier: byte) -> word:
+    return base * multiplier
+
+@irq
+def raster_handler(vic: byte):
+    if vic & 0x01:
+        vic = 0x01
+        new_score: word = calculate_score(100, 5)  # Normál hívás - működik!
+```
+
+**A compiler automatikusan:**
+1. Menti a főprogram `tmp0-tmp5`, `FP`, `SSP` értékeit a HW stack-re
+2. Beállítja az `SSP`-t és `FP`-t a hívott függvény számára
+3. Hívás után visszaállítja az eredeti értékeket
+
+**Overhead:** ~100-120 ciklus per hívás (a mentés/visszaállítás miatt).
+
+**Előny:** A normál függvények **mind IRQ-ból, mind a főprogramból hívhatók** - ugyanaz a kód újrahasználható mindkét kontextusban.
+
+**Optimalizálás:** Ha minimális overhead kell és a függvény **csak IRQ-ból** lesz hívva, használj `@irq_helper` dekorátort. Ez `irq_tmp0-5` regisztereket használ, ezért főprogramból NEM hívható!
+
+### 5.7 irq_safe wrapper típus
+
+Az `irq_safe` wrapper típus **atomi hozzáférést** biztosít változókhoz, amelyeket mind a főprogram, mind az IRQ handler használ.
+
+```python
+@singleton
+class Game:
+    score: irq_safe[word[0x00FB]]    # Atomi hozzáférés
+```
+
+**Probléma (irq_safe nélkül):**
+
+```
+; Normál word írás - VESZÉLYES!
+    lda #$39
+    sta $FB          ; ← IRQ itt szakíthatja meg
+    lda #$30         ;   Az IRQ hibás értéket olvas!
+    sta $FC
+```
+
+**Megoldás (irq_safe-fel):**
+
+```
+; irq_safe word írás - BIZTONSÁGOS
+    php              ; I flag mentése
+    sei              ; IRQ tiltás
+    lda #$39
+    sta $FB
+    lda #$30
+    sta $FC
+    plp              ; I flag visszaállítása
+```
+
+**Miért PHP/PLP és nem SEI/CLI?**
+
+A `PLP` visszaállítja az **eredeti** I flag állapotot. Ha a user korábban `__sei__()`-t hívott, a CLI visszakapcsolná az IRQ-t a szándéka ellenére.
+
+**IRQ kontextus detektálás:**
+
+Az IRQ handlerekben a védelem **automatikusan kimarad** (a 6502 CPU automatikusan I=1-re állítja).
+
+**Overhead:**
+
+| Művelet          | Extra ciklus |
+| ---------------- | ------------ |
+| irq_safe olvasás | +9 ciklus    |
+| irq_safe írás    | +9 ciklus    |
+| IRQ-ban          | +0 ciklus    |
+
+### 5.8 IRQ handler beállítása
+
+**`__set_irq__()` intrinsic (ajánlott):**
+
+```python
+@irq_hook
+def frame_counter():
+    frame_count: byte[0x02F0]
+    frame_count = frame_count + 1
+
+def main():
+    __set_irq__(frame_counter)  # Automatikusan felismeri a dekorátort
+```
+
+| Dekorátor   | Beállított vector     |
+| ----------- | --------------------- |
+| `@irq`      | $FFFE/$FFFF (hardver) |
+| `@irq_raw`  | $FFFE/$FFFF (hardver) |
+| `@irq_hook` | $0314/$0315 (Kernal)  |
+
+**Manuális beállítás:**
+
+```python
+def main():
+    irq_vector: word[0x0314]
+    __sei__()
+    irq_vector = addr(raster_handler)
+    __cli__()
+```
+
+### 5.9 SSP védett frissítés
+
+Ha a programban van `@irq` handler, a kódgenerátor **védett SSP frissítést** használ page boundary crossing esetén:
+
+```asm
+; Védett SSP frissítés (php/plp megőrzi a user __sei__ állapotát)
+clc
+lda SSP
+adc #<frame_size
+bcc .no_carry       ; Ha nincs carry → biztonságos
+php                 ; Page crossing → védelem!
+sei
+sta SSP
+inc SSP+1
+plp                 ; EREDETI I flag visszaállítása
+jmp .done
+.no_carry:
+sta SSP
+.done:
+```
+
+**Overhead:**
+- Nincs page crossing: **0 extra ciklus**
+- Page crossing: **+12 ciklus**
+
+---
+
+## 6. Intrinsic függvények
+
+### 6.1 Interrupt kezelés
+
+**`__sei__()` - Interrupt tiltás:**
+
+```python
+__sei__()  # Interrupts disabled
+```
+
+A 6502 `SEI` utasítását generálja.
+
+**`__cli__()` - Interrupt engedélyezés:**
+
+```python
+__cli__()  # Interrupts enabled
+```
+
+A 6502 `CLI` utasítását generálja.
+
+> **Fontos:** A `__sei__()` és `__cli__()` mindig párban használandók!
+
+### 6.2 Timing
+
+**`__nop__()` - Üres utasítás:**
+
+```python
+__nop__()     # 1 NOP = 2 ciklus
+__nop__(5)    # 5 NOP = 10 ciklus
+```
+
+Tipikus használat: precíz timing raster effekteknél.
+
+### 6.3 Raster IRQ segédfüggvények
+
+**`__enable_raster_irq__(line)` - Raster IRQ bekapcsolása:**
+
+```python
+IRQ_LINE = 100
+
+def main():
+    __set_irq__(raster_handler)
+    __enable_raster_irq__(IRQ_LINE)
+```
+
+Automatikusan kezeli a SEI/CLI-t és a $D011 bit 7-et (9. raster bit).
+
+**`__disable_raster_irq__()` - Raster IRQ kikapcsolása:**
+
+```python
+def cleanup():
+    __disable_raster_irq__()
+```
+
+**`__set_raster__(line)` - Raster sor beállítása:**
+
+```python
+@irq
+def split_screen(vic: byte, cia1: byte):
+    vic = 0x01
+    current: word = __get_raster__()
+
+    if current < 100:
+        __set_raster__(SECOND_LINE)
+    else:
+        __set_raster__(FIRST_LINE)
+```
+
+IRQ kontextusban **nincs** SEI/CLI overhead.
+
+**`__get_raster__()` - Aktuális raster sor:**
+
+```python
+current: word = __get_raster__()  # 0-311
+```
+
+**Összefoglaló:**
+
+| Függvény                 | Visszatérés | IRQ védelem                      |
+| ------------------------ | ----------- | -------------------------------- |
+| `__enable_raster_irq__`  | void        | PHP/SEI...PLP (mindig)           |
+| `__disable_raster_irq__` | void        | PHP/SEI...PLP (mindig)           |
+| `__set_raster__`         | void        | PHP/SEI...PLP (csak IRQ-n kívül) |
+| `__get_raster__`         | word        | Nincs (csak olvasás)             |
+
+### 6.4 Egyéb intrinsics
+
+**`__inc__(var)` / `__dec__(var)` - Belső használatú:**
+
+> **Megjegyzés:** Ezeket nem kell közvetlenül használni! A compiler automatikusan INC/DEC utasításra alakítja a `counter += 1` és `counter -= 1` kifejezéseket. Egyszerűen használd a `+=` / `-=` operátorokat - az optimalizáció automatikus.
+>
+> **Fontos:** A `c = c + 1` forma NEM alakul át automatikusan, csak a `c += 1`!
+
+---
+
+## 7. Automatikus optimalizációk
+
+### 7.1 Tömb másolás (Array Copy)
+
+A `arr1 = arr2` típusú tömb értékadás inline memcpy-t generál.
+
+**Címzési módok:**
+
+| Típus          | Módszer   | Ciklus/byte |
+| -------------- | --------- | ----------- |
+| Indirekt       | `(ptr),Y` | ~17-19      |
+| Hibrid         | Vegyes    | ~15-16      |
+| Absolute (SMC) | `$addr,Y` | ~13-15      |
+
+```python
+def main():
+    screen: array[byte, 1000][0x0400]  # Mapped
+    backup: array[byte, 1000][0xC000]  # Mapped
+
+    backup = screen  # SMC optimalizált: ~13-15 cy/byte
+```
+
+A fordító automatikusan a leggyorsabb módszert választja:
+- Mindkét mapped → teljes SMC (leggyorsabb)
+- Egyik mapped → hibrid
+- Egyik sem mapped → indirekt
+
+### 7.2 Téglalap másolás (blkcpy)
+
+A `blkcpy()` intrinsic gyors block memóriamásolást valósít meg.
+
+**Szintaxis:**
+
+```python
+# 7 paraméteres (közös stride):
+blkcpy(src_arr, src_offset, dst_arr, dst_offset, width, height, stride)
+
+# 8 paraméteres (külön stride):
+blkcpy(src_arr, src_offset, src_stride, dst_arr, dst_offset, dst_stride, width, height)
+```
+
+**Használati példák:**
+
+```python
+screen: array[byte, 1000][0x0400]
+
+# Scroll left
+blkcpy(screen, 1, screen, 0, 39, 25, 40)
+
+# Scroll up
+blkcpy(screen, 40, screen, 0, 40, 24, 40)
+
+# Tile blit (8x8 tile → screen)
+blkcpy(tile, 0, 8, screen, 12*40+16, 40, 8, 8)
+```
+
+**Automatikus irány-detektálás:**
+
+Átfedő másolásnál a fordító automatikusan meghatározza a helyes irányt:
+- **Forward** (dst ≤ src): 0-tól width-1-ig
+- **Backward** (dst > src): width-1-től 0-ig
+
+**Teljesítmény:**
+
+| Tömb típusok   | Ciklus/byte |
+| -------------- | ----------- |
+| Mindkét mapped | ~13         |
+| Egyik mapped   | ~17         |
+| Mindkét stack  | ~21         |
+
+### 7.3 Aritmetikai optimalizációk
+
+#### Strength Reduction (O1)
+
+Konstans 2-hatványokkal végzett műveletek bit shift-re cserélődnek:
+
+| Művelet  | Optimalizált kód | Megtakarítás |
+| -------- | ---------------- | ------------ |
+| `a * 2`  | `asl`            | ~80 → 2 cy   |
+| `a * 4`  | `asl` `asl`      | ~80 → 4 cy   |
+| `a / 2`  | `lsr`            | ~80 → 2 cy   |
+| `a % 16` | `and #15`        | ~100 → 2 cy  |
+
+#### Konstans szorzás dekompozíció (O2)
+
+Kis konstansokkal való szorzás shift+add/sub kombinációkra bomlik:
+
+| Konstans | Dekompozíció        | Ciklus |
+| -------- | ------------------- | ------ |
+| 3        | `(a << 1) + a`      | ~12    |
+| 5        | `(a << 2) + a`      | ~14    |
+| 7        | `(a << 3) - a`      | ~16    |
+| 9        | `(a << 3) + a`      | ~16    |
+| 10       | `(a << 3) + (a<<1)` | ~20    |
+
+**Teljesítmény összehasonlítás:**
+
+| Művelet | Runtime helper | O1 (shift) | O2 (decomp) |
+| ------- | -------------- | ---------- | ----------- |
+| `a * 2` | ~80 cy         | ~2 cy      | -           |
+| `a * 3` | ~80 cy         | -          | ~12 cy      |
+| `a * 5` | ~80 cy         | -          | ~14 cy      |
+
+---
+
+## 8. Típus implementáció
+
+### 8.1 Float formátum
+
+A PyCo **32-bites MBF** (Microsoft Binary Format) lebegőpontos számokat használ:
+
+| Byte | Tartalom                       |
+| ---- | ------------------------------ |
+| 0    | Exponens (biased by 128)       |
+| 1-3  | Mantissza (24 bit, implicit 1) |
+| 3    | bit 7 = előjel                 |
+
+**Ábrázolható tartomány:**
+
+| Érték       | Decimális közelítés |
+| ----------- | ------------------- |
+| Max pozitív | ~1.7×10³⁸           |
+| Max negatív | ~-1.7×10³⁸          |
+
+### 8.2 Float túlcsordulás
+
+Túlcsordulás esetén **signed saturation** történik:
+
+| Művelet           | Feltétel         | Eredmény    |
+| ----------------- | ---------------- | ----------- |
+| Összeadás/szorzás | Pozitív overflow | Max pozitív |
+| Összeadás/szorzás | Negatív overflow | Max negatív |
+| Osztás nullával   | Pozitív osztandó | Max pozitív |
+| Osztás nullával   | Negatív osztandó | Max negatív |
+
+> **Megjegyzés:** Ez eltér a Commodore BASIC-től (`?OVERFLOW ERROR`). A PyCo a DSP/SIMD processzoroknál megszokott saturation megközelítést használja.
+
+---
+
+## 9. Build rendszer
+
+### 9.1 D64 lemezképek
+
+A PyCo támogatja a multi-file projektek D64 lemezképbe csomagolását TOML konfigurációval.
+
+**Projekt struktúra:**
+
+```
+project/
+├── game.pyco       # Fő program
+├── game.toml       # Projekt konfiguráció
+├── build/
+│   ├── game.prg
+│   ├── game.d64
+│   └── ...
+└── includes/
+```
+
+### 9.2 TOML konfiguráció
+
+```toml
+[project]
+name = "MyGame"
+version = "1.0"
+
+[disk]
+label = "MYGAME"      # Lemez neve (max 16 karakter)
+id = "01"             # Lemez ID (2 karakter)
+
+[[disk.files]]
+source = "build/game.prg"
+name = "MYGAME"
+
+[[disk.files]]
+source = "build/title_bitmap_rle.prg"
+name = "TITLEBIT"
+
+[run]
+autostart = true
+warp = true
+```
+
+**Disk ID:** A 2 karakteres ID fontos a 1541 drive BAM cache-elése miatt. Lemezcserénél az ID változása jelzi a drive-nak az újraolvasást.
+
+### 9.3 CLI használat
+
+```bash
+# Fordítás
+pycoc compile game.pyco              # → build/game.prg
+
+# D64 létrehozás
+pycoc d64 game.toml                  # → build/game.d64
+
+# Futtatás VICE-ban
+pycoc run game.pyco
+pycoc run game.toml
+```
+
+**Tipikus workflow:**
+
+```bash
+pycoc compile game.pyco   # 1. Fordítás
+pycoc image title.koa ... # 2. Képek konvertálása
+pycoc music song.fur ...  # 3. Zene konvertálása
+pycoc d64 game.toml       # 4. D64 összeállítása
+```
+
+### 9.4 PRG fájl formátum
+
+```
+┌──────────────┬─────────────────────┐
+│ Byte 0-1     │ Byte 2 - végéig     │
+│ Load address │ Raw data            │
+│ (little-end) │                     │
+└──────────────┴─────────────────────┘
+```
+
+A C64 `LOAD "FILE",8,1` parancs a PRG-ben tárolt címre tölti az adatot.
+
+### 9.5 Binary konverterek
+
+```bash
+# Kép → PRG
+pycoc image title.koa --binary -C rle -O build/
+
+# Zene → PRG
+pycoc music song.fur --binary -L 0xA000 -O build/
+```
 
 ---
 
@@ -1140,7 +1072,6 @@ A **Frame Pointer (FP)** egy fix pont, amihez képest a fordító eléri a param
 ### Memory-mapped változók
 
 ```python
-# VIC regiszterek elérése
 BORDER = 0xD020
 BGCOLOR = 0xD021
 
@@ -1152,7 +1083,7 @@ def main():
     bgcolor = 6      # kék háttér
 ```
 
-### Képernyő memória elérése
+### Képernyő memória
 
 ```python
 SCREEN = 0x0400
@@ -1162,11 +1093,11 @@ def main():
     screen: array[byte, 1000][SCREEN]
     color: array[byte, 1000][COLOR]
 
-    screen[0] = 1        # 'A' karakter
-    color[0] = 1         # fehér szín
+    screen[0] = 1    # 'A' karakter
+    color[0] = 1     # fehér szín
 ```
 
-### Teljes példa: Színes keret
+### Színes keret
 
 ```python
 @lowercase
@@ -1179,689 +1110,16 @@ def main():
             border = i
 ```
 
----
-
-## Float túlcsordulás kezelése
-
-A PyCo 32-bites MBF (Microsoft Binary Format) lebegőpontos számokat használ. Amikor egy művelet eredménye meghaladja az ábrázolható tartományt, **signed saturation** (előjeles telítés) történik.
-
-### Ábrázolható tartomány
-
-| Érték | Hexadecimális | Decimális közelítés |
-| ----- | ------------- | ------------------- |
-| Max pozitív | `$FF7FFFFF` | ~1.7×10³⁸ |
-| Max negatív | `$FFFFFFFF` | ~-1.7×10³⁸ |
-
-### Túlcsordulás viselkedése
-
-| Művelet | Feltétel | Eredmény |
-| ------- | -------- | -------- |
-| Összeadás | Pozitív overflow | `$FF7FFFFF` (max pozitív) |
-| Összeadás | Negatív overflow | `$FFFFFFFF` (max negatív) |
-| Szorzás | Pozitív overflow | `$FF7FFFFF` (max pozitív) |
-| Szorzás | Negatív overflow | `$FFFFFFFF` (max negatív) |
-| Osztás nullával | Pozitív/nulla osztandó | `$FF7FFFFF` (max pozitív) |
-| Osztás nullával | Negatív osztandó | `$FFFFFFFF` (max negatív) |
-
-### Példa
+### Raster scroll
 
 ```python
-def main():
-    huge: float = 1e38
-    result: float
-
-    # Overflow pozitív irányba → max pozitív
-    result = huge * 10.0
-
-    # Overflow negatív irányba → max negatív
-    result = -huge * 10.0
-```
-
-> **Megjegyzés:** Ez a viselkedés eltér a Commodore BASIC-től, ami `?OVERFLOW ERROR`-t dob. A PyCo a DSP/SIMD processzoroknál megszokott "saturation" megközelítést használja, ami lehetővé teszi a program folytatását.
-
-## Hardver-közeli intrinsic függvények
-
-A C64-es fordító speciális beépített függvényeket biztosít a hardver közvetlen eléréséhez.
-
-### `__sei__()` - Interrupt tiltás
-
-A 6502 `SEI` (Set Interrupt Disable) utasítását generálja. Letiltja a maszkolható megszakításokat (IRQ).
-
-```python
-__sei__()  # Interrupts disabled
-```
-
-### `__cli__()` - Interrupt engedélyezés
-
-A 6502 `CLI` (Clear Interrupt Disable) utasítását generálja. Engedélyezi a maszkolható megszakításokat.
-
-```python
-__cli__()  # Interrupts enabled
-```
-
-### `__nop__()` - Üres utasítás
-
-A 6502 `NOP` (No Operation) utasítását generálja. Nem csinál semmit, csak 2 CPU ciklust vár.
-
-```python
-__nop__()     # 1 NOP = 2 ciklus késleltetés
-__nop__(5)    # 5 NOP = 10 ciklus késleltetés
-```
-
-**Szintaxis:**
-- `__nop__()` - egyetlen NOP utasítás (2 ciklus)
-- `__nop__(n)` - n darab NOP utasítás (n × 2 ciklus), ahol n pozitív egész konstans
-
-**Tipikus használati esetek:**
-- Precíz timing beállítása raster effekteknél
-- Ciklus-pontos késleltetés IRQ handlerekben
-- Placeholder kódban (később módosítható)
-
-**Példa: Raster stabilizálás**
-
-```python
-@irq
-def raster_irq():
-    __nop__(7)  # 14 ciklus timing finomhangolás
-    border: byte[0xD020]
-    border = 1
-```
-
-### Példa: Character ROM olvasása
-
-A Character ROM ($D000) csak akkor érhető el, ha az I/O ki van kapcsolva. Ehhez az interruptokat is le kell tiltani:
-
-```python
-def copy_charset():
-    cpu_port: byte[0x01]
-    char_rom: array[byte, 2048][0xD000]
-    char_ram: array[byte, 2048][0xA000]
-    old_port: byte
-    i: word
-
-    __sei__()                        # Interrupt tiltás
-    old_port = cpu_port
-    cpu_port = old_port & 0xFB       # I/O kikapcsolása, CHAROM láthatóvá tétele
-
-    for i in range(2048):
-        char_ram[i] = char_rom[i]    # Másolás
-
-    cpu_port = old_port              # I/O visszakapcsolása
-    __cli__()                        # Interrupt engedélyezés
-```
-
-> **Fontos:** A `__sei__()` és `__cli__()` mindig párban használandók! Az interrupt tiltás ideje alatt a rendszer nem reagál billentyűzetre, időzítőkre stb.
-
-### Raster IRQ segédfüggvények
-
-A C64 VIC-II chipjének raster IRQ kezeléséhez kényelmes segédfüggvények állnak rendelkezésre.
-
-#### `__enable_raster_irq__(line)` - Raster IRQ bekapcsolása
-
-Bekapcsolja a VIC-II raster IRQ-t a megadott képernyősoron (0-311). Automatikusan kezeli a SEI/CLI-t és a $D011 bit 7-et (9. raster bit).
-
-```python
-IRQ_LINE = 100
+scroll_x: byte[0x02F0] = 0
 
 @irq
-def raster_handler(vic: byte, cia1: byte):
-    vic = 0x01  # IRQ acknowledge
-    border: byte[0xD020]
-    border = 1
+def raster_handler():
+    vic_ctrl2: byte[0xD016]
+    vic_irq: byte[0xD019]
 
-def main():
-    __set_irq__(raster_handler)
-    __enable_raster_irq__(IRQ_LINE)
-    while True:
-        pass
+    vic_ctrl2 = (vic_ctrl2 & 0xF8) | scroll_x
+    vic_irq = 0xFF
 ```
-
-**Generált kód (konstans line):**
-```asm
-php
-sei
-lda $d011
-and #$7f          ; vagy ora #$80 ha line >= 256
-sta $d011
-lda #<line
-sta $d012
-lda #$01
-sta $d01a
-plp
-```
-
-#### `__disable_raster_irq__()` - Raster IRQ kikapcsolása
-
-Kikapcsolja a VIC-II raster IRQ-t. Automatikusan kezeli a SEI/CLI-t.
-
-```python
-def cleanup():
-    __disable_raster_irq__()
-```
-
-**Generált kód:**
-```asm
-php
-sei
-lda #$00
-sta $d01a
-plp
-```
-
-#### `__set_raster__(line)` - Raster sor beállítása
-
-Beállítja a következő raster IRQ sort (0-311). Tipikusan az IRQ handlerben használatos split-screen effektekhez. IRQ kontextusban **nincs** SEI/CLI overhead.
-
-```python
-FIRST_LINE = 50
-SECOND_LINE = 150
-
-@irq
-def split_screen(vic: byte, cia1: byte):
-    vic = 0x01  # IRQ acknowledge
-    current: word
-    current = __get_raster__()
-
-    if current < 100:
-        # Első sávban vagyunk, következő a második
-        __set_raster__(SECOND_LINE)
-        # ... első sáv beállításai ...
-    else:
-        # Második sávban vagyunk, következő az első
-        __set_raster__(FIRST_LINE)
-        # ... második sáv beállításai ...
-```
-
-**Generált kód IRQ-ban (nincs SEI/CLI):**
-```asm
-lda $d011
-and #$7f          ; vagy ora #$80
-sta $d011
-lda #<line
-sta $d012
-```
-
-**Generált kód IRQ-n kívül (védett):**
-```asm
-php
-sei
-lda $d011
-and #$7f
-sta $d011
-lda #<line
-sta $d012
-plp
-```
-
-#### `__get_raster__()` - Aktuális raster sor lekérdezése
-
-Visszaadja az aktuális raster sort word-ként (0-311). Nincs IRQ védelem, mert csak olvasás.
-
-```python
-@irq
-def wait_for_line(vic: byte, cia1: byte):
-    current: word
-    current = __get_raster__()
-    if current == 260:
-        # ... VBlank terület ...
-        pass
-```
-
-**Generált kód:**
-```asm
-lda $d012         ; Alsó 8 bit
-sta tmp0
-lda $d011
-and #$80          ; Bit 7 = raster bit 8
-asl
-lda #$00
-rol               ; Carry → bit 0
-sta tmp1
-```
-
-#### Összefoglaló táblázat
-
-| Függvény                | Argumentum  | Visszatérés | IRQ védelem                         |
-| ----------------------- | ----------- | ----------- | ----------------------------------- |
-| `__enable_raster_irq__` | line (word) | void        | PHP/SEI...PLP (mindig)              |
-| `__disable_raster_irq__`| -           | void        | PHP/SEI...PLP (mindig)              |
-| `__set_raster__`        | line (word) | void        | PHP/SEI...PLP (csak IRQ-n kívül)    |
-| `__get_raster__`        | -           | word        | Nincs (csak olvasás)                |
-
----
-
-## Automatikus optimalizációk
-
-A C64 fordító automatikusan alkalmaz bizonyos optimalizációkat a generált kódban.
-
-### Tömb másolás (Array Copy)
-
-A `arr1 = arr2` típusú tömb értékadás inline memcpy-t generál. A fordító automatikusan felismeri, ha mindkét tömb fix címen van (mapped arrays), és ilyenkor gyorsabb kódot generál.
-
-**Címzési módok összehasonlítása:**
-
-| Típus              | Forrás     | Cél        | Ciklus/byte | Megjegyzés                      |
-| ------------------ | ---------- | ---------- | ----------- | ------------------------------- |
-| Indirekt           | `(ptr),Y`  | `(ptr),Y`  | ~17-19      | Stack/alias tömbök              |
-| **Hibrid (src)**   | `$addr,Y`  | `(ptr),Y`  | ~15-16      | Mapped forrás → stack/alias cél |
-| **Hibrid (dst)**   | `(ptr),Y`  | `$addr,Y`  | ~15-16      | Stack/alias forrás → mapped cél |
-| **Absolute (SMC)** | `$addr,Y`  | `$addr,Y`  | ~13-15      | **Mindkét mapped**              |
-
-**Példa - Mapped tömbök (gyors):**
-
-```python
-def main():
-    screen: array[byte, 1000][0x0400]  # Képernyő memória
-    backup: array[byte, 1000][0xC000]  # Backup terület
-
-    backup = screen  # SMC optimalizált: ~13-15 cy/byte
-```
-
-Generált assembly:
-```asm
-    lda $0400,y    ; 4-5 ciklus (absolute,Y)
-    sta $C000,y    ; 5 ciklus (absolute,Y)
-    iny            ; 2 ciklus
-    cpy #...       ; 2 ciklus
-    bne loop       ; 2-3 ciklus
-```
-
-**Példa - Stack tömbök (általános):**
-
-```python
-def main():
-    src: array[byte, 100]
-    dst: array[byte, 100]
-
-    dst = src  # Indirekt címzés: ~17-19 cy/byte
-```
-
-Generált assembly:
-```asm
-    lda (tmp0),y   ; 5-6 ciklus (indirect,Y)
-    sta (tmp2),y   ; 6 ciklus (indirect,Y)
-    iny            ; 2 ciklus
-    cpy #...       ; 2 ciklus
-    bne loop       ; 2-3 ciklus
-```
-
-**Példa - Hibrid másolás (mapped ↔ stack):**
-
-```python
-def main():
-    screen: array[byte, 40][0x0400]  # Mapped tömb
-    buffer: array[byte, 40]          # Stack tömb
-
-    buffer = screen  # Hibrid: lda $0400,y + sta (tmp2),y
-    screen = buffer  # Hibrid: lda (tmp0),y + sta $0400,y
-```
-
-A fordító automatikusan felismeri, ha az egyik oldal mapped, és használja az absolute,Y címzést arra az oldalra. Ez ~10-15% gyorsítást jelent a tisztán indirekt módhoz képest.
-
-**Multi-page tömbök (>256 byte):**
-
-Nagy tömbök esetén a fordító automatikusan page-alapú másolást generál. Mapped tömbök esetén önmódosító kódot (SMC) használ a cím frissítésére:
-
-```python
-backup: array[byte, 1000][0xC000]
-screen: array[byte, 1000][0x0400]
-backup = screen  # 3 page + 232 byte maradék
-```
-
-A generált kód automatikusan kezeli a page-határokat, és a végén visszaállítja az eredeti címeket, hogy a másolás többször is lefuttatható legyen.
-
-**Teljesítmény összehasonlítás (1000 byte másolás):**
-
-| Módszer                       | Ciklus összesen | Idő @1MHz |
-| ----------------------------- | --------------- | --------- |
-| Indirekt (stack ↔ stack)      | ~17,000-19,000  | ~17-19 ms |
-| **Hibrid (mapped ↔ stack)**   | ~15,000-16,000  | ~15-16 ms |
-| **Absolute (mapped ↔ mapped)**| ~13,000-15,000  | ~13-15 ms |
-
-> **Megjegyzés:** Az optimalizáció automatikus minden esetben:
-> - Ha **mindkét** tömb mapped → teljes SMC (leggyorsabb)
-> - Ha **egyik** tömb mapped → hibrid (egy absolute, egy indirect)
-> - Ha **egyik sem** mapped → mindkét oldalon indirect
-
-### Téglalap másolás (blkcpy)
-
-A `blkcpy()` intrinsic gyors téglalap (block) memóriamásolást valósít meg. Ideális képernyő scroll, double buffering, tile/sprite blit műveletekhez.
-
-**Szintaxis:**
-
-```python
-# 7 paraméteres (közös stride):
-blkcpy(src_arr, src_offset, dst_arr, dst_offset, width, height, stride)
-
-# 8 paraméteres (külön stride forrásra és célra):
-blkcpy(src_arr, src_offset, src_stride, dst_arr, dst_offset, dst_stride, width, height)
-```
-
-**Paraméterek:**
-
-| Paraméter    | Típus | Leírás                                        |
-| ------------ | ----- | --------------------------------------------- |
-| `src_arr`    | array | Forrás tömb                                   |
-| `src_offset` | word  | Forrás kezdő offset (byte)                    |
-| `src_stride` | byte  | Forrás sor hossz (csak 8-param verzió)        |
-| `dst_arr`    | array | Cél tömb                                      |
-| `dst_offset` | word  | Cél kezdő offset (byte)                       |
-| `dst_stride` | byte  | Cél sor hossz (csak 8-param verzió)           |
-| `width`      | byte  | Téglalap szélessége (byte-ban, max 255)       |
-| `height`     | byte  | Téglalap magassága (sorok száma, max 255)     |
-| `stride`     | byte  | Közös sor hossz (csak 7-param verzió)         |
-
-**Használati példák:**
-
-```python
-screen: array[byte, 1000][0x0400]
-buffer: array[byte, 1000][0x8000]
-tile: array[byte, 16][0xC000]  # 4x4 tile
-
-# Scroll left - 1 karakterrel balra
-blkcpy(screen, 1, screen, 0, 39, 25, 40)
-
-# Scroll up - 1 sorral felfelé
-blkcpy(screen, 40, screen, 0, 40, 24, 40)
-
-# Double buffer - 20x10 régió másolása
-blkcpy(buffer, 5*40+10, screen, 5*40+10, 20, 10, 40)
-
-# Tile blit - 4x4 tile másolása a képernyőre (különböző stride)
-blkcpy(tile, 0, 4, screen, 5*40+10, 40, 4, 4)
-```
-
-**Automatikus irány-detektálás:**
-
-Átfedő (overlapping) másolásnál a fordító automatikusan meghatározza a helyes másolási irányt:
-
-| Eset                            | Irány    | Meghatározás         |
-| ------------------------------- | -------- | -------------------- |
-| Különböző tömbök                | Forward  | Compile-time (0 cy)  |
-| Azonos tömb, mindkét offset fix | Megfelelő| Compile-time (0 cy)  |
-| Azonos tömb, változó offset     | Megfelelő| Runtime (~20 cy)     |
-
-- **Forward** (dst ≤ src): 0-tól width-1-ig másol
-- **Backward** (dst > src): width-1-től 0-ig másol
-
-**Példa - Scroll left (átfedő, forward):**
-
-```python
-# Forrás: screen+1, Cél: screen+0
-# dst(0) < src(1) → forward irány automatikus
-blkcpy(screen, 1, screen, 0, 39, 25, 40)
-```
-
-**Példa - Scroll right (átfedő, backward):**
-
-```python
-# Forrás: screen+0, Cél: screen+1
-# dst(1) > src(0) → backward irány automatikus
-blkcpy(screen, 0, screen, 1, 39, 25, 40)
-```
-
-**Teljesítmény:**
-
-| Tömb típusok                     | Ciklus/byte | Módszer      |
-| -------------------------------- | ----------- | ------------ |
-| Mindkét mapped                   | ~13         | Full SMC     |
-| Egyik mapped, másik stack        | ~17         | Hybrid SMC   |
-| Mindkét stack                    | ~21         | Indirect     |
-
-A fordító automatikusan a leggyorsabb elérhető módszert választja.
-
-**Tile blit példa (8 paraméteres verzió):**
-
-```python
-def main():
-    # 8x8 pixeles tile (8 byte széles, 8 sor magas)
-    tile: array[byte, 64][0xC000]  # stride = 8
-    screen: array[byte, 1000][0x0400]  # stride = 40
-    i: byte
-
-    # Tile feltöltése mintával
-    for i in range(64):
-        tile[i] = 0xAA if (i & 1) else 0x55
-
-    # Tile blit a képernyő közepére (16,12)
-    # 8-param: src, src_ofs, src_stride, dst, dst_ofs, dst_stride, w, h
-    blkcpy(tile, 0, 8, screen, 12*40+16, 40, 8, 8)
-```
-
-> **Megjegyzés:** A 8 paraméteres verzió lehetővé teszi különböző stride-ok használatát, ami nélkülözhetetlen tile/sprite rendszerekhez, ahol a tile-ok tömören tárolódnak, de a képernyőn 40 byte a sorhossz.
-
----
-
-## Aritmetikai optimalizációk
-
-A fordító automatikusan optimalizálja bizonyos aritmetikai műveleteket, hogy gyorsabb kódot generáljon a lassú runtime helper függvények helyett.
-
-### Strength Reduction (O1)
-
-Konstans 2-hatványokkal végzett szorzás, osztás és modulo műveletek bit shift és AND műveletekre cserélődnek:
-
-| Művelet  | Optimalizált kód                | Megtakarítás  |
-| -------- | ------------------------------- | ------------- |
-| `a * 2`  | `asl` (1 shift)                 | ~80 → 2 cy    |
-| `a * 4`  | `asl` `asl` (2 shift)           | ~80 → 4 cy    |
-| `a * 8`  | `asl` `asl` `asl` (3 shift)     | ~80 → 6 cy    |
-| `a / 2`  | `lsr` (1 shift)                 | ~80 → 2 cy    |
-| `a / 4`  | `lsr` `lsr` (2 shift)           | ~80 → 4 cy    |
-| `a % 16` | `and #15`                       | ~100 → 2 cy   |
-| `a % 256`| `and #$FF` (word: low byte)     | ~100 → 2 cy   |
-
-**Word típusnál** a shift műveletek carry-vel propagálódnak:
-
-```asm
-; w * 4 (16-bit)
-asl tmp0    ; low byte shift
-rol tmp1    ; high byte shift + carry
-asl tmp0
-rol tmp1
-```
-
-**Kommutativitás:** A szorzás mindkét irányban optimalizált (`a * 4` és `4 * a`), de az osztás és modulo csak jobb oldali konstanssal (`a / 4`, `a % 16`).
-
-### Konstans szorzás dekompozíció (O2)
-
-Kis konstansokkal való szorzás shift+add/sub kombinációkra bomlik:
-
-| Konstans | Dekompozíció             | Műveletek           | Ciklus |
-| -------- | ------------------------ | ------------------- | ------ |
-| 3        | `(a << 1) + a`           | 2a + a              | ~12    |
-| 5        | `(a << 2) + a`           | 4a + a              | ~14    |
-| 7        | `(a << 3) - a`           | 8a - a              | ~16    |
-| 9        | `(a << 3) + a`           | 8a + a              | ~16    |
-| 10       | `(a << 3) + (a << 1)`    | 8a + 2a             | ~20    |
-
-**Generált kód példa (`a * 5`):**
-
-```asm
-; tmp2 = eredeti érték (a)
-pha             ; Save original
-asl             ; *2
-asl             ; *4
-sta tmp3        ; Store shifted
-pla             ; Load original
-clc
-adc tmp3        ; 4a + a = 5a
-```
-
-**Megjegyzések:**
-- A dekompozíció `tmp2` és `tmp3` regisztereket használ
-- Word típusnál 16-bites shift+add/sub műveletek generálódnak
-- A nem optimalizált konstansok (pl. 6, 11, 13) továbbra is runtime helper-t használnak
-- IRQ handler-ekben automatikusan `irq_tmp2`/`irq_tmp3` használatos
-
-**Teljesítmény összehasonlítás:**
-
-| Művelet     | Runtime helper | O1 (shift) | O2 (decomp) |
-| ----------- | -------------- | ---------- | ----------- |
-| `a * 2`     | ~80 cy         | ~2 cy      | -           |
-| `a * 3`     | ~80 cy         | -          | ~12 cy      |
-| `a * 4`     | ~80 cy         | ~4 cy      | -           |
-| `a * 5`     | ~80 cy         | -          | ~14 cy      |
-| `a * 8`     | ~80 cy         | ~6 cy      | -           |
-| `a / 4`     | ~120 cy        | ~4 cy      | -           |
-| `a % 16`    | ~100 cy        | ~2 cy      | -           |
-
-A konstans kifejezések (pl. `3 * 4`) továbbra is fordítási időben kiértékelődnek (constant folding), így a fenti optimalizációk csak változó operandusokra vonatkoznak.
-
-## D64 lemezképek és projekt konfiguráció
-
-A PyCo támogatja a multi-file projektek D64 lemezképbe csomagolását TOML konfigurációs fájl segítségével.
-
-### TOML projekt fájl
-
-A `.toml` fájl neve megegyezik a `.pyco` fájl nevével:
-
-```
-project/
-├── game.pyco       # Fő program
-├── game.toml       # Projekt konfiguráció
-├── build/          # Generált fájlok
-│   ├── game.prg
-│   ├── game.d64
-│   ├── title_bitmap_rle.prg
-│   └── music.prg
-└── includes/
-    └── ...
-```
-
-### TOML struktúra
-
-```toml
-# Projekt információk (opcionális)
-[project]
-name = "MyGame"
-version = "1.0"
-
-# D64 lemez beállítások
-[disk]
-label = "MYGAME"      # Lemez neve (max 16 karakter)
-id = "01"             # Lemez ID (2 karakter, egyedi azonosító)
-
-# Fájlok a lemezen - a sorrend számít!
-# Az első fájl lesz az autostart program
-[[disk.files]]
-source = "build/game.prg"
-name = "MYGAME"
-
-[[disk.files]]
-source = "build/title_bitmap_rle.prg"
-name = "TITLEBIT"
-
-[[disk.files]]
-source = "build/music.prg"
-name = "MUSIC"
-
-# VICE futtatási beállítások
-[run]
-autostart = true      # Automatikusan indítsa a programot?
-warp = true           # Warp mód betöltés közben (gyorsabb)?
-```
-
-### Disk ID magyarázat
-
-A Commodore lemezformátum minden lemezhez 5 karakteres azonosítót tárol:
-
-```
-0 "MYGAME          " 01 2A
-   ↑                 ↑  ↑
-   Label (16 ch)     ID Type
-```
-
-| Mező  | Jelentés                                      |
-| ----- | --------------------------------------------- |
-| Label | A lemez neve (16 karakter, szóközzel töltve)  |
-| ID    | 2 karakteres egyedi azonosító                 |
-| Type  | Lemez típus (2A = standard D64)               |
-
-Az ID fontos a 1541 drive BAM cache-elése miatt. Lemezcserénél az ID változása jelzi a drive-nak, hogy újra kell olvasnia a tartalomjegyzéket.
-
-### CLI használat
-
-```bash
-# Fordítás
-pycoc compile game.pyco              # → build/game.prg
-
-# D64 létrehozás (NEM fordít, csak csomagol)
-pycoc d64 game.toml                  # → build/game.d64
-pycoc d64 game.toml -o dist/game.d64 # Egyedi kimenet
-
-# Futtatás VICE-ban (fordít + D64 ha van TOML)
-pycoc run game.pyco
-pycoc run game.toml
-
-# Futtatás D64 nélkül (csak PRG)
-pycoc run game.pyco --no-disk
-```
-
-**Tipikus workflow:**
-```bash
-pycoc compile game.pyco   # 1. Fordítás
-pycoc image title.koa ... # 2. Képek konvertálása
-pycoc music song.fur ...  # 3. Zene konvertálása
-pycoc d64 game.toml       # 4. D64 összeállítása
-```
-
-### Run beállítások
-
-| Beállítás   | Alapértelmezés | Leírás                                               |
-| ----------- | -------------- | ---------------------------------------------------- |
-| `autostart` | `true`         | Ha true, automatikusan betölti és futtatja a programot |
-| `warp`      | `false`        | Ha true, warp módban tölt (gyorsabb, de nincs hang)  |
-
-**autostart = false** esetén:
-- A lemez csatolva lesz a drive 8-hoz
-- A felhasználónak kell beírnia: `LOAD"*",8,1` majd `RUN`
-- Hasznos debuggoláshoz vagy speciális betöltési szekvenciákhoz
-
-**warp = true** esetén:
-- A VICE `-autostart-warp` kapcsolóját használja
-- Betöltés alatt gyorsított mód (nincs hang)
-- Betöltés után automatikusan visszaáll normál sebességre
-
-### Binary konverterek
-
-A képek és zenék külön PRG fájlként generálhatók a D64-be:
-
-```bash
-# Kép → PRG (RLE tömörítéssel)
-pycoc image title.koa --binary -C rle -O build/
-# Eredmény: title_bitmap_rle.prg, title_screen_rle.prg, title_colorram_rle.prg
-
-# Zene → PRG
-pycoc music song.fur --binary -L 0xA000 -O build/
-# Eredmény: song_music.prg (adat), song_music.pyco (stub)
-```
-
-### PRG fájl formátum
-
-A PRG a C64 natív bináris formátuma:
-
-```
-┌──────────────┬─────────────────────┐
-│ Byte 0-1     │ Byte 2 - végéig     │
-│ Load address │ Raw data            │
-│ (LE)         │                     │
-└──────────────┴─────────────────────┘
-```
-
-- **Load address**: 2 byte, little-endian (pl. `$00 $60` = $6000)
-- **Data**: Nyers byte-ok
-
-A C64 `LOAD "FILE",8,1` parancs a `,1` kapcsolóval a PRG-ben tárolt címre tölti az adatot.
-
-### Hiányzó fájlok kezelése
-
-Ha a TOML-ban hivatkozott fájl nem létezik, a D64 generálás **hibával leáll**:
-
-```
-$ pycoc run game.toml
-Creating D64 disk image...
-Error: Missing files for D64:
-  build/music.prg
-```
-
-Ez biztosítja, hogy a lemez mindig teljes és konzisztens legyen.

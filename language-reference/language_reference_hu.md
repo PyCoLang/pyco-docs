@@ -41,7 +41,7 @@ Az első referencia implementáció a C64-re készült.
 
 ```python
 # Ez egy komment
-import sys
+from sys import clear_screen
 
 class Position:
     # Minden property-t deklarálni kell
@@ -215,34 +215,137 @@ def main():
 
 ### 2.6 Import
 
-Modulok betöltése az `import` kulcsszóval történik. Ez lefordított modulokat tölt be, amikből függvényeket és osztályokat használhatunk.
+Az `import` utasítás lefordított modulokból tölt be függvényeket és osztályokat. A PyCo-ban az import helye meghatározza a betöltés módját.
+
+**Szintaxis:**
 
 ```python
-import c64
-import math
+from modul_név import név1, név2, név3
+from modul_név import név as alias
 ```
 
-**Egyszerű szabályok:**
-- Nincsenek névterek (namespace) - egy modulnév egy fájlt jelent
-- A fordító csak a ténylegesen használt függvényeket tölti be a modulból
-- Ajánlott hárombetűs prefix a saját modulokhoz az ütközések elkerülésére (pl. `abc_utils`)
+**Alapszabályok:**
 
-**Modul elérése:**
+- **Kötelező felsorolás**: Minden használt nevet explicit fel kell sorolni
+- **Nincs wildcard**: `from X import *` NEM támogatott
+- **Prefix nélküli használat**: Az importált nevek közvetlenül használhatók
+
+#### Két import mód
+
+Az import helye meghatározza, hogyan töltődik be a modul:
+
+| Import helye          | Mód       | Mikor töltődik be | Élettartam       |
+| --------------------- | --------- | ----------------- | ---------------- |
+| Fájl elején (top-level) | Statikus | Fordításkor       | Program futása   |
+| Függvényben           | Dinamikus | Futáskor          | Scope vége       |
+
+**Statikus import (top-level):**
 
 ```python
-import math
+# Fájl elején - STATIKUSAN befordul a programba
+from math import sin, cos
 
-def example():
-    x: float
-    x = math.sin(3.14)
+def main():
+    x: float = sin(0.5)    # Közvetlenül használható
+    y: float = cos(0.5)
 ```
 
-**Include vs Import összehasonlítás:**
+A statikus import előnyei:
+- Nincs futásidejű betöltés
+- A fordító ellenőrzi a típusokat
+- Tree-shaking: csak a használt függvények kerülnek a programba
 
-| Kulcsszó         | Mit csinál                    | Mikor használjuk                  |
-| ---------------- | ----------------------------- | --------------------------------- |
-| `include("név")` | Szövegesen beilleszti a fájlt | Konstansok, definíciók megosztása |
-| `import név`     | Lefordított modult tölt be    | Függvények, osztályok használata  |
+**Dinamikus import (függvényen belül):**
+
+```python
+def game_screen():
+    # Függvényben - DINAMIKUSAN töltődik be futáskor
+    from game_utils import update, draw
+    from music import play
+
+    play()
+    while not game_over:
+        update()
+        draw()
+    # ← Függvény vége: a modulok memóriája FELSZABADUL!
+```
+
+A dinamikus import előnyei:
+- Memória hatékony: csak az van memóriában, ami éppen kell
+- Scope = Lifetime: automatikus felszabadítás
+- Végtelen méretű program részletekben töltve
+
+#### Alias (`as`) támogatás
+
+Névütközés esetén vagy rövidítéshez használható:
+
+```python
+from math import sin as math_sin
+from audio import sin as audio_sin
+
+x: float = math_sin(0.5)
+freq: float = audio_sin(440.0)
+```
+
+**Névütközés = fordítási hiba:**
+
+```python
+from math import sin
+from audio import sin     # HIBA: 'sin' already imported from 'math'!
+
+# Megoldás - használj alias-t:
+from math import sin
+from audio import sin as audio_sin   # OK
+```
+
+#### Export szabályok
+
+A modulok Python-szerű export szabályokat követnek:
+
+| Név formátum                   | Exportálva?              |
+| ------------------------------ | ------------------------ |
+| `name`                         | ✓ Igen (publikus)        |
+| `_name`                        | ✗ Nem (privát)           |
+| `from X import foo`            | ✓ Igen (re-export)       |
+| `from X import foo as _foo`    | ✗ Nem (privát alias)     |
+
+```python
+# math.pyco modul
+def sin(x: float) -> float:     # ✓ Exportálva (publikus)
+    return _sin_impl(x)
+
+def _sin_impl(x: float) -> float:   # ✗ NEM exportálva (privát)
+    ...
+```
+
+#### Egyedi modul összeállítás
+
+Több lib-ből összeválogathatod a szükséges függvényeket egy saját modulba:
+
+```python
+# my_game_utils.pyco - saját modul
+from math import sin, cos           # Statikusan befordul
+from physics import update_pos
+from gfx import draw_sprite
+
+def rotate(x: int, y: int, angle: float) -> int:
+    return int(x * cos(angle) - y * sin(angle))
+```
+
+A fő programban dinamikusan betöltheted:
+
+```python
+def game_screen():
+    from my_game_utils import sin, cos, rotate, draw_sprite
+    # Minden egy modulban, egy betöltéssel
+```
+
+#### Include vs Import összehasonlítás
+
+| Kulcsszó               | Mit csinál                       | Mikor használjuk                       |
+| ---------------------- | -------------------------------- | -------------------------------------- |
+| `include("név")`       | Szövegesen beilleszti a fájlt    | Konstansok, definíciók megosztása      |
+| `from X import a, b`   | Lefordított modulból tölt be     | Függvények, osztályok használata       |
 
 ### 2.7 Konstansok
 

@@ -28,4 +28,3 @@ Full documentation of the PyCo language:
 ## Other Resources
 
 - [Built-in 6502 Assembler](assembler/)
-- [VICE Debugger Integration](vice/)
