@@ -3668,10 +3668,10 @@ def greet(name="World"):          def greet(name: alias[string]):
     print(f"Hello {name}!")           print("Hello ", name, "!\n")
 
 def main():                       def main():
-    e = Enemy(50)                     e: Enemy           # Deklaráció
-                                      e(50)              # Inicializálás
     x = 10                            x: int = 10
     name = "hello"                    name: string = "hello"
     items = [0] * 100                 items: array[byte, 100] = [0]
     data = [1, 2, 3]                  data: array[byte, 3] = (1, 2, 3)
+    e = Enemy(50)                     e: Enemy           # Deklaráció
+                                      e(50)              # Inicializálás
 ```
