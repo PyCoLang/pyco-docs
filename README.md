@@ -14,6 +14,19 @@
 
 The first reference implementation targets the Commodore 64.
 
+## Project Status
+
+| Component              | Status                                      |
+| ---------------------- | ------------------------------------------- |
+| Language specification | Mostly complete, still evolving             |
+| C64 compiler           | Coming soon (Apache 2.0 license)            |
+
+**Proof of concept:** [SLOTSHOT](https://github.com/PyCoLang/slotshot) - a full C64 game written entirely in PyCo.
+
+This documentation describes the PyCo language design. The specification is close to final, but some features may still change as the compiler development reveals edge cases or better solutions.
+
+Feedback and suggestions are welcome!
+
 ## Language Reference
 
 Full documentation of the PyCo language:
