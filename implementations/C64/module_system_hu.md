@@ -1098,49 +1098,6 @@ Runtime Error: Out of memory loading module (need 1234 bytes, have 500)
 Runtime Error: Module format error (invalid magic)
 ```
 
-## Implementációs Fázisok
-
-### Fázis 1: Modul Generálás
-
-- [ ] `.pm` fájl formátum generálása (Code + Info Section)
-- [ ] Symbol table (csak publikus nevek, `_` prefix szűrése)
-- [ ] Re-export kezelés (statikus import → export, kivéve `as _name`)
-- [ ] Code+data szekció $0000 base-zel
-- [ ] Jump table generálás
-- [ ] `pycoc compile --module` kapcsoló
-
-### Fázis 2: Statikus Import (`from X import`)
-
-- [ ] Info Section olvasás fordításkor
-- [ ] Publikus név ellenőrzés
-- [ ] Típus és paraméter ellenőrzés
-- [ ] `as` alias támogatás
-- [ ] Névütközés detektálás
-- [ ] Code beillesztés és compile-time relokáció
-- [ ] Tree-shaking (csak használt entry point-ok)
-
-### Fázis 3: Dinamikus Import (`import X`)
-
-- [ ] `import X` statement felismerése
-- [ ] Info Section olvasás (metaadatok, aláírások)
-- [ ] BSS pointer foglalás (`__mod_X`)
-- [ ] Entry offset-ek tárolása
-- [ ] Namespace-es hívás generálása (`X.func()`)
-
-### Fázis 4: Runtime Loader (`load_module`)
-
-- [ ] `load_module()` builtin függvény
-- [ ] Disk I/O (OPEN, READ, CLOSE)
-- [ ] Code Section betöltése (code_size + adat)
-- [ ] Marker-byte relokáció
-- [ ] BSS pointer beállítás
-- [ ] SSP kezelés
-
-### Fázis 5: Optimalizálások
-
-- [ ] Loader kód méret optimalizálás
-- [ ] Gyorsabb relokáció (page-aligned modulok)
-
 ## Összefoglalás
 
 ### Két import mód
