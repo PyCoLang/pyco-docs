@@ -1,0 +1,52 @@
+########################
+# OS-specific ignores  #
+########################
+
+########
+# macOS
+########
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Icon files
+Icon
+
+# Resource forks
+._*
+
+# Spotlight search index
+.Spotlight-V100
+
+# Trash
+.Trashes
+
+# File system events
+.fseventsd
+
+# Document revisions
+.DocumentRevisions-V100
+
+# Temporary items
+.TemporaryItems
+
+# Network mounts
+.apdisk
+
+###########
+# Windows
+###########
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+$RECYCLE.BIN/*
+*.lnk
+
+#########
+# Linux
+#########
+*~
+.nfs*

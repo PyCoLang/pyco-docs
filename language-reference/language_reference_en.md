@@ -275,6 +275,8 @@ Benefits of dynamic import:
 - Scope = Lifetime: automatic cleanup
 - Unlimited program size through partial loading
 
+> **Note:** Dynamic import is a platform-specific feature. It may not be available or practical on all platforms - for example, on microcontrollers without storage (disk, SD card), dynamic loading is not possible. In such cases, only static import can be used.
+
 #### Alias (`as`) Support
 
 Used for name collisions or shortening:
@@ -318,6 +320,50 @@ def _sin_impl(x: float) -> float:   # ✗ NOT exported (private)
     ...
 ```
 
+#### Global Tuple Import
+
+Module global tuples can be imported, similar to functions and classes:
+
+```python
+# screen.pyco module - global tuple definition
+row_offsets: tuple[word] = (0, 40, 80, 120, 160, 200, 240, 280, 320, 360)
+sprite_masks: tuple[byte] = (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01)
+```
+
+**Static tuple import:**
+
+```python
+from screen import row_offsets
+
+def main():
+    y: byte = 5
+    offset: word = row_offsets[y]  # Direct access
+    print(offset)  # 200
+```
+
+**Dynamic tuple import:**
+
+```python
+import screen
+
+def main():
+    load_module(screen)
+    offset: word = screen.row_offsets[5]  # With namespace
+    print(offset)  # 200
+```
+
+**Tuple export rules:**
+
+| Tuple Name      | Exported? |
+| --------------- | --------- |
+| `row_offsets`   | ✓ Yes     |
+| `_internal_buf` | ✗ No      |
+
+Benefits of tuple import:
+- **Tree-shaking**: Only used tuples are compiled in
+- **Shareable data**: Lookup tables, sprite data, character sets
+- **Ideal for education**: Built-in data that can be learned gradually
+
 #### Custom Module Composition
 
 You can compose your own module from multiple libraries:
@@ -338,6 +384,73 @@ In the main program, you can load it dynamically:
 def game_screen():
     from my_game_utils import sin, cos, rotate, draw_sprite
     # Everything in one module, one load
+```
+
+#### Namespace Import with `load_module()`
+
+For explicit control over module loading, use the `import` statement with `load_module()`:
+
+```python
+import screen  # Register module (no code loaded yet!)
+
+@lowercase
+def main():
+    load_module(screen)  # Load module from disk at runtime
+
+    screen.Screen()                        # Initialize singleton
+    screen.Screen.clear(' ', 0, 1)         # Call singleton method
+    screen.print_at(10, 10, "Hello!", 1)   # Call module function
+```
+
+**How it works:**
+
+| Statement | What happens |
+|-----------|--------------|
+| `import X` | Reads type info from `.pmi` file, allocates BSS pointer |
+| `load_module(X)` | Loads `.pm` file from disk, relocates to SSP |
+| `X.func()` | Calls function through module's jump table |
+| `X.Class()` | Initializes singleton from module |
+| `X.Class.method()` | Calls method on singleton |
+
+**Alias support:**
+
+```python
+import screen as scr
+
+def main():
+    load_module(scr)
+    scr.Screen()
+    scr.Screen.clear(' ', 0, 1)
+```
+
+#### Dynamic Import Limitations
+
+> **IMPORTANT:** Dynamic imports have restrictions compared to static imports!
+
+| Feature | Static (`from X import`) | Dynamic (`import X`) |
+|---------|--------------------------|----------------------|
+| Module-level functions | ✅ Full support | ✅ Full support |
+| Global tuples | ✅ Full support | ✅ Full support |
+| Singleton classes | ✅ Auto-init defaults | ⚠️ Requires explicit `X.Class()` |
+| Regular classes | ✅ Full support | ✅ Full support |
+| Property defaults | ✅ Automatic | ⚠️ Only via `__init__` |
+
+**Why these limitations?**
+
+- Dynamic modules are loaded at **runtime**, not compile-time
+- The compiler only has type information (`.pmi`), not default values
+- Regular class instances need stack allocation which requires compile-time knowledge
+
+**Best practice for dynamic modules:**
+
+```python
+# In your module - always use __init__ for singletons!
+@singleton
+class Config:
+    value: byte
+
+    def __init__():
+        self.value = 42  # Set defaults here, not in declaration!
 ```
 
 #### Include vs Import Comparison

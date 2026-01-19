@@ -275,6 +275,8 @@ A dinamikus import előnyei:
 - Scope = Lifetime: automatikus felszabadítás
 - Végtelen méretű program részletekben töltve
 
+> **Megjegyzés:** A dinamikus import platform-specifikus feature. Nem minden platformon érhető el vagy van értelme - például mikrovezérlőknél, ahol nincs háttértár (lemez, SD kártya), a dinamikus betöltés nem lehetséges. Ilyen esetben csak a statikus import használható.
+
 #### Alias (`as`) támogatás
 
 Névütközés esetén vagy rövidítéshez használható:
@@ -318,6 +320,50 @@ def _sin_impl(x: float) -> float:   # ✗ NEM exportálva (privát)
     ...
 ```
 
+#### Globális tuple import
+
+A modulok globális tuple-jei is importálhatók, hasonlóan a függvényekhez és osztályokhoz:
+
+```python
+# screen.pyco modul - globális tuple definíció
+row_offsets: tuple[word] = (0, 40, 80, 120, 160, 200, 240, 280, 320, 360)
+sprite_masks: tuple[byte] = (0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x01)
+```
+
+**Statikus tuple import:**
+
+```python
+from screen import row_offsets
+
+def main():
+    y: byte = 5
+    offset: word = row_offsets[y]  # Közvetlen hozzáférés
+    print(offset)  # 200
+```
+
+**Dinamikus tuple import:**
+
+```python
+import screen
+
+def main():
+    load_module(screen)
+    offset: word = screen.row_offsets[5]  # Namespace-szel
+    print(offset)  # 200
+```
+
+**Tuple export szabályok:**
+
+| Tuple név       | Exportálva? |
+| --------------- | ----------- |
+| `row_offsets`   | ✓ Igen      |
+| `_internal_buf` | ✗ Nem       |
+
+A tuple import előnyei:
+- **Tree-shaking**: Csak a használt tuple-ök fordulnak be
+- **Megosztható adat**: Lookup table-ök, sprite adatok, karakter készletek
+- **Oktatáshoz ideális**: Beépített adatok, amiket fokozatosan lehet megismerni
+
 #### Egyedi modul összeállítás
 
 Több lib-ből összeválogathatod a szükséges függvényeket egy saját modulba:
@@ -338,6 +384,73 @@ A fő programban dinamikusan betöltheted:
 def game_screen():
     from my_game_utils import sin, cos, rotate, draw_sprite
     # Minden egy modulban, egy betöltéssel
+```
+
+#### Namespace import `load_module()`-lal
+
+Ha explicit kontrollra van szükséged a modul betöltése felett, használd az `import` utasítást `load_module()`-lal:
+
+```python
+import screen  # Modul regisztrálás (még nincs kód betöltve!)
+
+@lowercase
+def main():
+    load_module(screen)  # Modul betöltése lemezről futásidőben
+
+    screen.Screen()                        # Singleton inicializálás
+    screen.Screen.clear(' ', 0, 1)         # Singleton metódus hívás
+    screen.print_at(10, 10, "Hello!", 1)   # Modul szintű függvény hívás
+```
+
+**Működés:**
+
+| Utasítás | Mi történik |
+|----------|-------------|
+| `import X` | Típus info olvasása `.pmi` fájlból, BSS pointer foglalás |
+| `load_module(X)` | `.pm` fájl betöltése lemezről, relokáció SSP-re |
+| `X.func()` | Függvény hívás a modul jump table-jén keresztül |
+| `X.Class()` | Singleton inicializálás a modulból |
+| `X.Class.method()` | Metódus hívás a singletonon |
+
+**Alias támogatás:**
+
+```python
+import screen as scr
+
+def main():
+    load_module(scr)
+    scr.Screen()
+    scr.Screen.clear(' ', 0, 1)
+```
+
+#### Dinamikus import korlátozások
+
+> **FONTOS:** A dinamikus importoknak korlátozásai vannak a statikus importhoz képest!
+
+| Funkció | Statikus (`from X import`) | Dinamikus (`import X`) |
+|---------|---------------------------|------------------------|
+| Modul szintű függvények | ✅ Teljes támogatás | ✅ Teljes támogatás |
+| Globális tuple-ök | ✅ Teljes támogatás | ✅ Teljes támogatás |
+| Singleton osztályok | ✅ Auto-init default-ok | ⚠️ Kötelező explicit `X.Class()` |
+| Normál osztályok | ✅ Teljes támogatás | ✅ Teljes támogatás |
+| Property default értékek | ✅ Automatikus | ⚠️ Csak `__init__`-ben |
+
+**Miért ezek a korlátozások?**
+
+- A dinamikus modulok **futásidőben** töltődnek, nem fordítási időben
+- A fordító csak típus információval rendelkezik (`.pmi`), nem default értékekkel
+- Normál osztály példányoknak stack allokáció kell, amihez fordítási idejű tudás szükséges
+
+**Legjobb gyakorlat dinamikus modulokhoz:**
+
+```python
+# A modulodban - singleton-oknál mindig használj __init__-et!
+@singleton
+class Config:
+    value: byte
+
+    def __init__():
+        self.value = 42  # Default-okat itt állítsd be, ne a deklarációnál!
 ```
 
 #### Include vs Import összehasonlítás
