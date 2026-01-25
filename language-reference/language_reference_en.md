@@ -2374,6 +2374,7 @@ Decorators depend on the target platform. For example, the C64 backend supports 
 | `@lowercase`     | Lowercase character set mode (main fn. only, C64)      |
 | `@kernal`        | Keep Kernal ROM enabled (main fn. only, C64)           |
 | `@noreturn`      | Skip cleanup - program never exits (main only)         |
+| `@origin(addr)`  | Custom program start address, no BASIC loader (main)   |
 | `@irq`           | Mark function as IRQ handler (chains to system IRQ)    |
 | `@irq_raw`       | Mark function as raw IRQ handler (direct rti)          |
 | `@irq_hook`      | Lightweight Kernal IRQ hook (no prologue, rts return)  |
@@ -3910,7 +3911,7 @@ This summary contains the most important differences between Python and PyCo.
 - ❌ `list`, `dict`, `set` (dynamic collections)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`, `@mapped`)
+- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`)
 - ❌ `async`/`await`
 - ❌ `import` (partially supported)
 - ❌ Multi-line string (`"""..."""`)

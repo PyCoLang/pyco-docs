@@ -2314,9 +2314,11 @@ A dekorátorok a célplatformtól függenek. Például a C64 backend a következ
 | `@lowercase`     | Kisbetűs karakterkészlet mód (csak main fv., C64)          |
 | `@kernal`        | Kernal ROM engedélyezése (csak main fv., C64)              |
 | `@noreturn`      | Cleanup kihagyása - program soha nem lép ki (main)         |
+| `@origin(cím)`   | Egyéni program kezdőcím, nincs BASIC loader (main)         |
 | `@irq`           | IRQ handler jelölés (rendszer IRQ-hoz láncolódik)          |
 | `@irq_raw`       | Nyers IRQ handler (közvetlen rti)                          |
 | `@irq_hook`      | Könnyűsúlyú Kernal IRQ hook (nincs prológ, rts return)     |
+| `@naked`         | IRQ-ból hívható függvény runtime overhead nélkül           |
 | `@forward`       | Forward deklaráció kölcsönös rekurzióhoz                   |
 | `@mapped(cím)`   | Előre lefordított kód hívása fix címen                     |
 
@@ -3759,7 +3761,7 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 - ❌ `list`, `dict`, `set` (dinamikus kollekciók)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@irq`, `@irq_raw`, `@irq_hook`, `@forward`, `@mapped`)
+- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`)
 - ❌ `async`/`await`
 - ❌ `import` (részlegesen támogatott)
 - ❌ Többsoros string (`"""..."""`)
