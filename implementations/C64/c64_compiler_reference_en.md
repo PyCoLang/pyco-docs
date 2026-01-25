@@ -409,7 +409,71 @@ def main():
     pass
 ```
 
-### 4.6 IRQ Decorators
+### 4.6 @origin(address)
+
+Sets a custom program start address without BASIC loader.
+
+```python
+@origin(0x1000)
+def main():
+    # Program starts at $1000
+    pass
+```
+
+**Operation:**
+
+- Program starts at the specified address (not $0801)
+- **No BASIC loader** - `BasicUpstart2` macro is omitted
+- PRG file's first 2 bytes contain the specified address (little-endian)
+
+**Loading and running:**
+
+```
+LOAD "FILE",8,1
+SYS 4096
+```
+
+The `,1` parameter is required in the `LOAD` command to load at the address stored in the file (not $0801).
+
+**Use cases:**
+
+1. **Cartridge development** - Program at $8000 as cartridge ROM
+2. **Debugger/monitor** - Program in upper memory ($C000+)
+3. **Multi-part programs** - Overlays at different addresses
+4. **Disable autostart** - Program shouldn't auto-run with RUN
+
+**Combination with other decorators:**
+
+```python
+@origin(0xC000)
+@noreturn
+@lowercase
+def main():
+    # Program at $C000, never returns to BASIC
+    pass
+```
+
+**Combination with @relocate:**
+
+```python
+@relocate(0xE000)
+def irq_handler():
+    pass
+
+@origin(0xC000)
+def main():
+    # Main program at $C000
+    # IRQ handler relocated to $E000
+    __set_irq__(irq_handler)
+```
+
+Relocation works the same: source code at program end, copied to target at startup.
+
+**Address range:** $0000-$FFFF (full 64KB)
+
+> **Note:** `@origin` can only be used on the `main()` function!
+
+### 4.7 IRQ Decorators
 
 Four decorators are available for IRQ handling. Detailed description: [5. IRQ Handling](#5-irq-handling).
 
@@ -420,7 +484,7 @@ Four decorators are available for IRQ handling. Detailed description: [5. IRQ Ha
 | `@irq_hook`     | $0314/$0315 (Kernal)    | Fastest, Kernal hook           |
 | `@irq_helper`   | N/A                     | Helper function for IRQ calls  |
 
-### 4.7 @naked
+### 4.8 @naked
 
 For functions written entirely in assembly. The compiler generates only a label, nothing else - no prologue, epilogue, or any PyCo overhead.
 

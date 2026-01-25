@@ -409,7 +409,71 @@ def main():
     pass
 ```
 
-### 4.6 IRQ dekorátorok
+### 4.6 @origin(address)
+
+Egyéni program kezdőcím beállítása BASIC loader nélkül.
+
+```python
+@origin(0x1000)
+def main():
+    # Program a $1000 címen indul
+    pass
+```
+
+**Működés:**
+
+- A program a megadott címen kezdődik (nem $0801-en)
+- **Nincs BASIC loader** - a `BasicUpstart2` makró kimarad
+- A PRG fájl első 2 byte-ja a megadott cím (little-endian)
+
+**Betöltés és futtatás:**
+
+```
+LOAD "FILE",8,1
+SYS 4096
+```
+
+A `,1` paraméter szükséges a `LOAD` parancsban, hogy a fájlban tárolt címre töltse (ne a $0801-re).
+
+**Használati esetek:**
+
+1. **Cartridge fejlesztés** - Program $8000-en cartridge ROM-ként
+2. **Hibakereső/monitor** - Program a felső memóriában ($C000+)
+3. **Több-részes programok** - Overlay-ek különböző címeken
+4. **Autostart letiltás** - Program ne induljon automatikusan RUN-nal
+
+**Kombináció más dekorátorokkal:**
+
+```python
+@origin(0xC000)
+@noreturn
+@lowercase
+def main():
+    # Program $C000-en, soha nem tér vissza BASIC-be
+    pass
+```
+
+**Kombináció @relocate-tel:**
+
+```python
+@relocate(0xE000)
+def irq_handler():
+    pass
+
+@origin(0xC000)
+def main():
+    # Fő program $C000-en
+    # IRQ handler $E000-re relokálva
+    __set_irq__(irq_handler)
+```
+
+A relokáció ugyanúgy működik: a forrás kód a fő program végén, induláskor átmásolódik a célcímre.
+
+**Címtartomány:** $0000-$FFFF (teljes 64KB)
+
+> **Figyelem:** Az `@origin` csak a `main()` függvényen használható!
+
+### 4.7 IRQ dekorátorok
 
 Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5. IRQ kezelés](#5-irq-kezelés).
 
@@ -420,7 +484,7 @@ Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5
 | `@irq_hook`   | $0314/$0315 (Kernal)  | Leggyorsabb, Kernal hook       |
 | `@irq_helper` | N/A                   | Segédfüggvény IRQ-ból híváshoz |
 
-### 4.7 @naked
+### 4.8 @naked
 
 Tisztán assembly-ben írt függvényekhez. A compiler csak egy címkét generál, semmi mást - nincs prologue, epilogue, vagy bármilyen PyCo overhead.
 
