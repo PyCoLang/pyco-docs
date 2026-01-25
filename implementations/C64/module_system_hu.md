@@ -385,13 +385,25 @@ A C64 memória térképe segít:
 | `$0400-$07FF` | Screen RAM (alapból) | ❌ SOHA (adat)      |
 | `$0800-$FFFF` | **Program terület**  | ✓ IGEN             |
 
-**Következtetés:** Ha egy címben a high byte `$00-$07`, az **garantáltan modul-belső cím**, amit relokálni kell!
+**FONTOS:** A high byte `$00-$07` tartomány **NEM garantáltan** modul-belső cím!
+
+A C64 memória térképe azt mutatja, hogy a `$0000-$07FF` tartomány rendszerterület
+(Zero Page, Stack, Screen RAM). Azonban a modul belső címei is `$0000`-tól indulnak!
+Ez azt jelenti, hogy egy modul-belső `$0400` offset és a C64 Screen RAM (`$0400`)
+**megkülönböztethetetlen** a binárisban.
+
+**Megoldás:** Explicit marker opcode-ok használata a relokálandó címekhez:
+- **JMP/JSR** - high byte `$00-$07` alapján (ezek biztosan belső címek)
+- **Immediate high byte** - JAM marker (`$02`) jelöli
+- **ABS,X/ABS,Y DATA elérés** - Speciális marker opcode-ok (`$12`, `$32`) jelölik
 
 ### Marker tartomány
 
 ```
-High byte: $00-$07 = MARKER (relokálandó)
-High byte: $08-$FF = FIX cím (HW regiszter, külső cím)
+High byte alapú detektálás (csak JMP/JSR/JMP(ind) esetén!):
+────────────────────────────────────────────────────────────
+High byte: $00-$07 = Belső cím (relokálandó)
+High byte: $08-$FF = Fix külső cím (HW regiszter, stb.)
 
 Offset számítás:
   offset = high_byte * 256 + low_byte
@@ -408,13 +420,59 @@ $07xx = offset 1792 - 2047
 Összesen: 2048 byte (2KB) belső címzés
 ```
 
+### Marker Opcode-ok
+
+A 6502 illegális opcode-okat használjuk markerként, mert:
+1. Normál kódban nem fordulnak elő
+2. Ha véletlenül végrehajtódnának (relokáció nélkül), a CPU megáll (JAM)
+3. A relokátor visszacseréli őket a valódi opcode-ra
+
+| Marker | Eredeti opcode | Utasítás típus | Használat |
+|--------|----------------|----------------|-----------|
+| `$02`  | `$A9`          | LDA #          | Immediate high byte pointer betöltés |
+| `$12`  | `$BD`          | LDA ABS,X      | DATA szekció olvasás X indexszel |
+| `$22`  | `$AD`          | LDA ABS        | DATA szekció közvetlen olvasás |
+| `$32`  | `$B9`          | LDA ABS,Y      | DATA szekció olvasás Y indexszel |
+| `$42`  | `$4C`          | JMP ABS        | Belső ugrás (>2KB modulokhoz) |
+| `$52`  | `$20`          | JSR ABS        | Belső hívás (>2KB modulokhoz) |
+
+**Miért kellenek JMP/JSR markerek?**
+
+A 2KB-nál nagyobb modulokban a JMP/JSR célcímek high byte-ja meghaladhatja a `$07`
+értéket. A high byte alapú detektálás ezeket külső címeknek hiszi! A marker egyértelműen
+jelöli a modul-belső ugrásokat.
+
+**Miért kellenek külön markerek az ABS,X/ABS,Y-hoz?**
+
+A modulokban a tuple/konstans adatok a DATA szekcióban vannak. Konstans indexű
+eléréskor a compiler közvetlen ABS,X/ABS,Y címzést generál a hatékonyság érdekében:
+
+```asm
+; tuple[5] elérése - közvetlen ABS címzés
+lda tuple_data+10    ; Hatékony, de a cím relokálandó!
+```
+
+A probléma: ha ez a cím pl. `$0400`, az megegyezik a C64 Screen RAM címével!
+A high byte alapú detektálás nem tudja megkülönböztetni őket. A marker viszont
+egyértelműen jelöli, hogy ez modul-belső DATA cím.
+
+```asm
+; Modulban generált kód:
+.byte $12            ; Marker (volt: $BD = LDA ABS,X)
+.word $0400          ; DATA offset (történetesen = Screen RAM cím!)
+
+; Relokáció után:
+lda $C400,x          ; $BD + relokált cím
+```
+
 ### Relokáció betöltéskor
 
-A relokátor **utasításról utasításra** halad (nem byte-ról byte-ra!), és két típusú
+A relokátor **utasításról utasításra** halad (nem byte-ról byte-ra!), és három típusú
 relokációt végez:
 
-1. **JMP/JSR/JMP(ind)** - 16-bit abszolút címek relokációja
-2. **JAM marker ($02)** - immediate high byte értékek relokációja
+1. **JMP/JSR/JMP(ind)** - 16-bit abszolút címek (high byte `$00-$07` alapján)
+2. **JAM marker ($02)** - immediate high byte értékek (pointer betöltés)
+3. **ABS marker ($12/$32)** - DATA szekció közvetlen elérése
 
 #### Utasítás-alapú scan
 
@@ -428,12 +486,29 @@ relocate:
     LDY #4              ; Skip 6-byte header (Y starts at code)
 .loop:
     LDA (module_ptr),Y  ; Opcode olvasása
-    CMP #$02            ; JAM marker?
+
+    ; === Marker opcode-ok (explicit jelölés) ===
+    CMP #$02            ; JAM marker? (immediate high byte)
     BEQ .do_jam
-    CMP #$20            ; JSR?
-    BEQ .do_abs
-    CMP #$4C            ; JMP?
-    BEQ .do_abs
+    CMP #$12            ; ABS,X marker? (LDA data,X)
+    BEQ .do_abs_marker
+    CMP #$22            ; ABS marker? (LDA data)
+    BEQ .do_abs_marker
+    CMP #$32            ; ABS,Y marker? (LDA data,Y)
+    BEQ .do_abs_marker
+    CMP #$42            ; JMP marker? (JMP belső címre)
+    BEQ .do_abs_marker
+    CMP #$52            ; JSR marker? (JSR belső címre)
+    BEQ .do_abs_marker
+
+    ; === JMP/JSR (high byte alapú, backward compat) ===
+    CMP #$20            ; JSR? (csak <2KB modulokhoz)
+    BEQ .do_jmp
+    CMP #$4C            ; JMP? (csak <2KB modulokhoz)
+    BEQ .do_jmp
+    CMP #$6C            ; JMP indirect?
+    BEQ .do_jmp
+
     ; ... skip instruction by length ...
 ```
 
@@ -512,30 +587,119 @@ kell, és a carry-t át kell vinni! Ha `LL + base_lo > 255`, a high byte is nő!
     STA (module_ptr),Y
 ```
 
+#### ABS,X/ABS,Y marker relokáció
+
+A DATA szekció közvetlen eléréseihez a compiler marker opcode-okat használ:
+- `$12` jelöli az `LDA abs,X` (`$BD`) utasításokat
+- `$32` jelöli az `LDA abs,Y` (`$B9`) utasításokat
+
+```asm
+; Fordított kód (modulban) - tuple konstans indexű elérése:
+    .byte $12           ; Marker (eredeti: $BD = LDA ABS,X)
+    .word $0400         ; DATA offset (véletlen egyezés Screen RAM-mal!)
+
+; Relokáció után ($C000 base esetén):
+    LDA $C400,X         ; $BD $00 $C4 - helyes relokált cím!
+```
+
+A relokátor egyszerűen visszacseréli a marker opcode-ot és relokálja a címet:
+
+```asm
+.do_abs_marker:
+    ; A = marker opcode ($12, $22, $32, $42, $52)
+    TAX                     ; Mentés X-be
+
+    ; Marker → eredeti opcode csere (lookup table)
+    CPX #$12
+    BNE .not_12
+    LDA #$BD                ; LDA ABS,X
+    JMP .patch_opcode
+.not_12:
+    CPX #$22
+    BNE .not_22
+    LDA #$AD                ; LDA ABS
+    JMP .patch_opcode
+.not_22:
+    CPX #$32
+    BNE .not_32
+    LDA #$B9                ; LDA ABS,Y
+    JMP .patch_opcode
+.not_32:
+    CPX #$42
+    BNE .not_42
+    LDA #$4C                ; JMP ABS
+    JMP .patch_opcode
+.not_42:
+    LDA #$20                ; JSR ABS ($52)
+
+.patch_opcode:
+    STA (module_ptr),Y      ; Opcode visszaírása
+
+    ; 16-bit cím relokálása (Y+1, Y+2 pozíción)
+    INY                     ; Low byte
+    LDA (module_ptr),Y
+    CLC
+    ADC base_lo
+    STA (module_ptr),Y
+    INY                     ; High byte
+    LDA (module_ptr),Y
+    ADC base_hi             ; + carry!
+    STA (module_ptr),Y
+
+    INY                     ; Következő utasításra
+    JMP .loop
+```
+
+**Miért nem elég a high byte alapú detektálás az ABS,X/ABS,Y-nál?**
+
+```asm
+; Probléma: mindkét utasítás $04 high byte-tal:
+LDA $0400,X         ; Screen RAM elérés - NE relokáld!
+LDA tuple_data,Y    ; ahol tuple_data = $0400 offset - RELOKÁLD!
+
+; A binárisban megkülönböztethetetlen:
+; $BD $00 $04  vs  $B9 $00 $04
+```
+
+A marker egyértelműen jelöli a modul-belső címeket:
+```asm
+STA $0400,X         ; $9D $00 $04 - külső, változatlan
+.byte $12, $00, $04 ; belső DATA - relokálandó!
+```
+
 ### Példa
 
 ```
 Modul eredetileg $0000-ra fordítva:
 ────────────────────────────────────
-$0000: JSR $0050     ; 20 50 00  → relokálandó
-$0003: LDA $0100     ; AD 00 01  → relokálandó
-$0006: STA $D400     ; 8D 00 D4  → fix (SID regiszter)
+$0000: JSR $0050     ; 20 50 00  → relokálandó (JMP/JSR)
+$0003: STA $0400,X   ; 9D 00 04  → NEM relokálandó (Screen RAM!)
+$0006: STA $D400     ; 8D 00 D4  → NEM relokálandó (SID regiszter)
 $0009: LDA #<$0200   ; A9 00     → relokálandó (JAM pattern)
 $000B: STA tmp0      ; 85 02
 $000D: .byte $02     ; 02        → JAM marker
 $000E: .byte >$0200  ; 02        → high byte
 $000F: STA tmp1      ; 85 03
+$0011: .byte $12     ; 12        → ABS,X marker (tuple elérés)
+$0012: .word $0400   ; 00 04     → DATA offset (történetesen = Screen RAM!)
+$0015: STA tmp0      ; 85 02
 
 Betöltés $C000-ra:
 ────────────────────────────────────
-$C000: JSR $C050     ; 20 50 C0  ✓ (teljes 16-bit relok)
-$C003: LDA $C100     ; AD 00 C1  ✓
-$C006: STA $D400     ; 8D 00 D4  ✓ (változatlan!)
+$C000: JSR $C050     ; 20 50 C0  ✓ (JMP/JSR relokálva)
+$C003: STA $0400,X   ; 9D 00 04  ✓ (változatlan - külső cím!)
+$C006: STA $D400     ; 8D 00 D4  ✓ (változatlan - HW regiszter)
 $C009: LDA #$00      ; A9 00     ✓ (low relokálva)
 $C00B: STA tmp0      ; 85 02     ✓
 $C00D: LDA #$C2      ; A9 C2     ✓ (JAM → LDA #, high relokálva)
 $C00F: STA tmp1      ; 85 03     ✓
+$C011: LDA $C400,X   ; BD 00 C4  ✓ (marker → LDA, cím relokálva!)
+$C014: STA tmp0      ; 85 02     ✓
 ```
+
+**Kulcs megfigyelés:** A `$0400` cím kétszer szerepel:
+1. `STA $0400,X` - Screen RAM elérés → **NEM** relokálódik (nincs marker)
+2. `$12 $00 $04` - DATA szekció elérés → **RELOKÁLÓDIK** (marker jelöli!)
 
 ### Előnyök
 

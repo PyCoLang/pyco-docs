@@ -385,13 +385,25 @@ The C64 memory map helps:
 | `$0400-$07FF`   | Screen RAM (default)   | ❌ NEVER (data)        |
 | `$0800-$FFFF`   | **Program area**       | ✓ YES                 |
 
-**Conclusion:** If an address has high byte `$00-$07`, it's **guaranteed to be a module-internal address** that needs relocation!
+**IMPORTANT:** A high byte of `$00-$07` is **NOT guaranteed** to be a module-internal address!
+
+The C64 memory map shows that the `$0000-$07FF` range is system area (Zero Page,
+Stack, Screen RAM). However, module internal addresses also start from `$0000`!
+This means a module-internal offset of `$0400` and the C64 Screen RAM (`$0400`)
+are **indistinguishable** in the binary.
+
+**Solution:** Use explicit marker opcodes for addresses that need relocation:
+- **JMP/JSR** - detected by high byte `$00-$07` (these are definitely internal)
+- **Immediate high byte** - marked by JAM marker (`$02`)
+- **ABS,X/ABS,Y DATA access** - marked by special marker opcodes (`$12`, `$32`)
 
 ### Marker Range
 
 ```
-High byte: $00-$07 = MARKER (needs relocation)
-High byte: $08-$FF = FIXED address (HW register, external address)
+High byte detection (only for JMP/JSR/JMP(ind)!):
+────────────────────────────────────────────────────────────
+High byte: $00-$07 = Internal address (needs relocation)
+High byte: $08-$FF = Fixed external address (HW register, etc.)
 
 Offset calculation:
   offset = high_byte * 256 + low_byte
@@ -408,13 +420,85 @@ $07xx = offset 1792 - 2047
 Total: 2048 bytes (2KB) internal addressing
 ```
 
+### Marker Opcodes
+
+We use 6502 illegal opcodes as markers because:
+1. They don't occur in normal code
+2. If accidentally executed (without relocation), the CPU halts (JAM)
+3. The relocator replaces them with the actual opcode
+
+| Marker | Original opcode | Instruction type | Usage |
+|--------|-----------------|------------------|-------|
+| `$02`  | `$A9`           | LDA #            | Immediate high byte for pointer loading |
+| `$12`  | `$BD`           | LDA ABS,X        | DATA section read with X index |
+| `$22`  | `$AD`           | LDA ABS          | Direct DATA section read |
+| `$32`  | `$B9`           | LDA ABS,Y        | DATA section read with Y index |
+| `$42`  | `$4C`           | JMP ABS          | Internal jump (for >2KB modules) |
+| `$52`  | `$20`           | JSR ABS          | Internal call (for >2KB modules) |
+
+**Why are separate markers needed for ABS,X/ABS,Y?**
+
+In modules, tuple/constant data resides in the DATA section. For constant index
+access, the compiler generates direct ABS,X/ABS,Y addressing for efficiency:
+
+```asm
+; tuple[5] access - direct ABS addressing
+lda tuple_data+10    ; Efficient, but address needs relocation!
+```
+
+The problem: if this address is e.g. `$0400`, it matches the C64 Screen RAM address!
+High byte detection cannot distinguish them. The marker explicitly indicates
+that this is a module-internal DATA address.
+
+```asm
+; Code generated in module:
+.byte $12            ; Marker (was: $BD = LDA ABS,X)
+.word $0400          ; DATA offset (happens to equal Screen RAM address!)
+
+; After relocation:
+lda $C400,x          ; $BD + relocated address
+```
+
+**Why are JMP/JSR markers needed for modules larger than 2KB?**
+
+The standard relocation logic detects JMP/JSR by checking if the high byte is `$00-$07`
+(internal module address). This works for modules up to 2KB. However, for larger modules:
+
+```asm
+; Module internal code at offset $0800 (2048 bytes):
+JSR $0850            ; High byte = $08 → NOT detected as internal!
+JMP $1234            ; High byte = $12 → NOT relocated!
+```
+
+The loader would treat these as external addresses (hardware registers, etc.) and
+NOT relocate them → **CRASH!**
+
+**Solution:** For modules that may exceed 2KB, the compiler uses explicit markers:
+
+```asm
+; Instead of:
+JSR $0850            ; 20 50 08 → won't be relocated!
+
+; The compiler generates:
+.byte $52            ; Marker (illegal opcode)
+.word $0850          ; Address
+
+; After relocation ($C000 base):
+JSR $C850            ; 20 50 C8 → correctly relocated!
+```
+
+This allows modules up to **40KB** (the entire C64 address space below I/O) to work correctly.
+
 ### Relocation at Load Time
 
 The relocator advances **instruction-by-instruction** (not byte-by-byte), performing
-two types of relocation:
+these types of relocation:
 
-1. **JMP/JSR/JMP(ind)** - 16-bit absolute address relocation
-2. **JAM marker ($02)** - immediate high byte value relocation
+1. **JAM marker ($02)** - immediate high byte values (pointer loading)
+2. **ABS marker ($12/$22/$32)** - direct DATA section access (LDA ABS,X / LDA ABS / LDA ABS,Y)
+3. **JMP marker ($42)** - internal JMP instructions (for >2KB modules)
+4. **JSR marker ($52)** - internal JSR instructions (for >2KB modules)
+5. **JMP/JSR/JMP(ind)** - 16-bit absolute addresses (by high byte `$00-$07`, for <2KB modules)
 
 #### Instruction-based Scan
 
@@ -428,12 +512,29 @@ relocate:
     LDY #4              ; Skip 6-byte header (Y starts at code)
 .loop:
     LDA (module_ptr),Y  ; Read opcode
-    CMP #$02            ; JAM marker?
+
+    ; === Marker opcodes (explicit marking) ===
+    CMP #$02            ; JAM marker? (immediate high byte)
     BEQ .do_jam
+    CMP #$12            ; ABS,X marker? (LDA data,X)
+    BEQ .do_abs_marker
+    CMP #$22            ; ABS marker? (LDA data)
+    BEQ .do_abs_marker
+    CMP #$32            ; ABS,Y marker? (LDA data,Y)
+    BEQ .do_abs_marker
+    CMP #$42            ; JMP marker? (for >2KB modules)
+    BEQ .do_jmp_marker
+    CMP #$52            ; JSR marker? (for >2KB modules)
+    BEQ .do_jsr_marker
+
+    ; === JMP/JSR (high byte detection, for <2KB modules) ===
     CMP #$20            ; JSR?
-    BEQ .do_abs
+    BEQ .do_jmp
     CMP #$4C            ; JMP?
-    BEQ .do_abs
+    BEQ .do_jmp
+    CMP #$6C            ; JMP indirect?
+    BEQ .do_jmp
+
     ; ... skip instruction by length ...
 ```
 
@@ -513,30 +614,146 @@ byte also increases!
     STA (module_ptr),Y
 ```
 
+#### ABS,X/ABS,Y Marker Relocation
+
+For direct DATA section access, the compiler uses marker opcodes:
+- `$12` marks `LDA abs,X` (`$BD`) instructions
+- `$22` marks `LDA abs` (`$AD`) instructions
+- `$32` marks `LDA abs,Y` (`$B9`) instructions
+
+```asm
+; Compiled code (in module) - constant index tuple access:
+    .byte $12           ; Marker (original: $BD = LDA ABS,X)
+    .word $0400         ; DATA offset (coincidental match with Screen RAM!)
+
+; After relocation ($C000 base):
+    LDA $C400,X         ; $BD $00 $C4 - correctly relocated address!
+```
+
+The relocator simply swaps the marker opcode back and relocates the address:
+
+```asm
+.do_abs_marker:
+    ; A = marker opcode ($12, $22, or $32)
+    TAX                     ; Save in X
+
+    ; Marker → original opcode swap
+    CPX #$12
+    BNE .not_12
+    LDA #$BD                ; LDA ABS,X
+    JMP .patch_opcode
+.not_12:
+    CPX #$22
+    BNE .not_22
+    LDA #$AD                ; LDA ABS
+    JMP .patch_opcode
+.not_22:
+    LDA #$B9                ; LDA ABS,Y
+
+.patch_opcode:
+    STA (module_ptr),Y      ; Write opcode back
+
+    ; Relocate 16-bit address (at Y+1, Y+2)
+    INY                     ; Low byte
+    LDA (module_ptr),Y
+    CLC
+    ADC base_lo
+    STA (module_ptr),Y
+    INY                     ; High byte
+    LDA (module_ptr),Y
+    ADC base_hi             ; + carry!
+    STA (module_ptr),Y
+
+    INY                     ; Move to next instruction
+    JMP .loop
+```
+
+#### JMP/JSR Marker Relocation (for >2KB modules)
+
+For modules larger than 2KB, internal JMP/JSR instructions are marked:
+- `$42` marks `JMP abs` (`$4C`) instructions
+- `$52` marks `JSR abs` (`$20`) instructions
+
+```asm
+.do_jmp_marker:
+    LDA #$4C                ; JMP absolute opcode
+    JMP .do_jsr_common
+
+.do_jsr_marker:
+    LDA #$20                ; JSR absolute opcode
+
+.do_jsr_common:
+    STA (module_ptr),Y      ; Replace marker with actual opcode
+
+    ; Relocate 16-bit address (at Y+1, Y+2)
+    INY                     ; Low byte
+    LDA (module_ptr),Y
+    CLC
+    ADC base_lo
+    STA (module_ptr),Y
+    INY                     ; High byte
+    LDA (module_ptr),Y
+    ADC base_hi             ; + carry!
+    STA (module_ptr),Y
+
+    INY                     ; Move to next instruction
+    JMP .loop
+```
+
+**Note:** The marker system ensures that ALL internal addresses are correctly
+relocated, regardless of module size. The old high-byte detection (`$00-$07`)
+is kept for backward compatibility with modules compiled before this feature.
+
+**Why isn't high byte detection enough for ABS,X/ABS,Y?**
+
+```asm
+; Problem: both instructions have $04 high byte:
+LDA $0400,X         ; Screen RAM access - DON'T relocate!
+LDA tuple_data,Y    ; where tuple_data = $0400 offset - RELOCATE!
+
+; Indistinguishable in binary:
+; $BD $00 $04  vs  $B9 $00 $04
+```
+
+The marker explicitly identifies module-internal addresses:
+```asm
+STA $0400,X         ; $9D $00 $04 - external, unchanged
+.byte $12, $00, $04 ; internal DATA - needs relocation!
+```
+
 ### Example
 
 ```
 Module originally compiled for $0000:
 ────────────────────────────────────
-$0000: JSR $0050     ; 20 50 00  → needs relocation
-$0003: LDA $0100     ; AD 00 01  → needs relocation
-$0006: STA $D400     ; 8D 00 D4  → fixed (SID register)
+$0000: JSR $0050     ; 20 50 00  → needs relocation (JMP/JSR)
+$0003: STA $0400,X   ; 9D 00 04  → NO relocation (Screen RAM!)
+$0006: STA $D400     ; 8D 00 D4  → NO relocation (SID register)
 $0009: LDA #<$0200   ; A9 00     → needs relocation (JAM pattern)
 $000B: STA tmp0      ; 85 02
 $000D: .byte $02     ; 02        → JAM marker
 $000E: .byte >$0200  ; 02        → high byte
 $000F: STA tmp1      ; 85 03
+$0011: .byte $12     ; 12        → ABS,X marker (tuple access)
+$0012: .word $0400   ; 00 04     → DATA offset (happens to match Screen RAM!)
+$0015: STA tmp0      ; 85 02
 
 Loaded to $C000:
 ────────────────────────────────────
-$C000: JSR $C050     ; 20 50 C0  ✓ (full 16-bit reloc)
-$C003: LDA $C100     ; AD 00 C1  ✓
-$C006: STA $D400     ; 8D 00 D4  ✓ (unchanged!)
+$C000: JSR $C050     ; 20 50 C0  ✓ (JMP/JSR relocated)
+$C003: STA $0400,X   ; 9D 00 04  ✓ (unchanged - external address!)
+$C006: STA $D400     ; 8D 00 D4  ✓ (unchanged - HW register)
 $C009: LDA #$00      ; A9 00     ✓ (low byte relocated)
 $C00B: STA tmp0      ; 85 02     ✓
 $C00D: LDA #$C2      ; A9 C2     ✓ (JAM → LDA #, high relocated)
 $C00F: STA tmp1      ; 85 03     ✓
+$C011: LDA $C400,X   ; BD 00 C4  ✓ (marker → LDA, address relocated!)
+$C014: STA tmp0      ; 85 02     ✓
 ```
+
+**Key observation:** The `$0400` address appears twice:
+1. `STA $0400,X` - Screen RAM access → **NOT** relocated (no marker)
+2. `$12 $00 $04` - DATA section access → **RELOCATED** (marker indicates it!)
 
 ### Benefits
 
@@ -1133,5 +1350,5 @@ Runtime Error: Module format error (invalid magic)
 
 ---
 
-*Version: 3.6 - 2026-01-18*
-*Changes: Dynamic tuple import support (`module.tuple[index]` after `load_module()`)*
+*Version: 3.7 - 2026-01-20*
+*Changes: JMP/JSR markers ($42/$52) for modules larger than 2KB, LDA ABS marker ($22)*
