@@ -860,6 +860,7 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 │   param_count (1 byte)                                      │
 │   param_types (N bytes, encoded types)                      │
 │   return_type (1 byte, encoded type)                        │
+│   flags (1 byte): bit0=is_naked, bit1=is_irq_helper         │
 ├─────────────────────────────────────────────────────────────┤
 │ CLASS ENTRY (if export_type = 1)                            │
 │   instance_size (2 bytes, word)                             │
@@ -880,6 +881,7 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 │     param_count (1 byte)                                    │
 │     param_types (N bytes)                                   │
 │     return_type (1 byte)                                    │
+│     flags (1 byte): bit0=is_naked, bit1=is_irq_helper       │
 ├─────────────────────────────────────────────────────────────┤
 │ SINGLETON ENTRY (if export_type = 2)                        │
 │   (Same structure as CLASS ENTRY)                           │
@@ -1106,7 +1108,38 @@ def main():
     print(config.Config.value)  # Now correctly shows 42
 ```
 
+### BSS Memory Layout for Static Singletons
+
+With static imports (`from module import Class`), the singleton BSS is **embedded with the module code**:
+
+```
+__MOD_modulename:
+    │
+    ├── Jump table (3 bytes/entry)
+    │
+    ├── Module code (code_bytes)
+    │
+    └── .fill bss_size, 0     ← Singleton BSS reserved!
+          │
+          └── __SI_ClassName = __MOD_modulename + code_size
+```
+
+**Important:** The singleton BSS is part of the MODULE, not in the importer's BSS!
+JAM marker relocation works automatically: `__MOD_xxx + offset` points to the correct location.
+
+**Example generated assembly:**
+```asm
+// Module embedding
+__MOD_counter:
+    .byte $4C, <(...), >(...)    // Jump table
+    .byte ...                     // Module code
+    .fill 1, 0                    // BSS (1 byte for Counter singleton)
+    .label __SI_Counter = __MOD_counter + $0059
+```
+
 ### BSS Memory Layout for Dynamic Singletons
+
+With dynamic imports (`import module` + `load_module()`), the singleton BSS is in the **importer's BSS**:
 
 ```
 __program_end
@@ -1119,6 +1152,10 @@ __program_end
           │
           └── __singletons_end = SSP start
 ```
+
+**Key difference:**
+- Static: `__SI_ClassName` points to module BSS (part of module)
+- Dynamic: `__DSI_module_ClassName` in importer's BSS (separately allocated)
 
 ## Global Tuple Export/Import
 

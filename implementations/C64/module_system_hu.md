@@ -806,6 +806,7 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 │   param_count (1 byte)                                      │
 │   param_types (N byte, kódolt típusok)                      │
 │   return_type (1 byte, kódolt típus)                        │
+│   flags (1 byte): bit0=is_naked, bit1=is_irq_helper         │
 ├─────────────────────────────────────────────────────────────┤
 │ CLASS ENTRY (ha export_type = 1)                            │
 │   instance_size (2 byte, word)                              │
@@ -826,6 +827,7 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 │     param_count (1 byte)                                    │
 │     param_types (N byte)                                    │
 │     return_type (1 byte)                                    │
+│     flags (1 byte): bit0=is_naked, bit1=is_irq_helper       │
 ├─────────────────────────────────────────────────────────────┤
 │ SINGLETON ENTRY (ha export_type = 2)                        │
 │   (Azonos struktúra mint CLASS ENTRY)                       │
@@ -1052,7 +1054,38 @@ def main():
     print(config.Config.value)  # Most helyesen 42-t mutat
 ```
 
+### BSS Memória Elrendezés Statikus Singleton-oknál
+
+Statikus importnál (`from module import Class`) a singleton BSS a **modul kódjával együtt** ágyazódik be:
+
+```
+__MOD_modulename:
+    │
+    ├── Jump table (3 byte/entry)
+    │
+    ├── Modul kód (code_bytes)
+    │
+    └── .fill bss_size, 0     ← Singleton BSS rezerválva!
+          │
+          └── __SI_ClassName = __MOD_modulename + code_size
+```
+
+**Fontos:** A singleton BSS a modul RÉSZÉNEK számít, nem az importer BSS-ében van!
+A JAM marker relokáció automatikusan működik: `__MOD_xxx + offset` pont a megfelelő helyre mutat.
+
+**Példa generált assembly:**
+```asm
+// Modul beágyazás
+__MOD_counter:
+    .byte $4C, <(...), >(...)    // Jump table
+    .byte ...                     // Modul kód
+    .fill 1, 0                    // BSS (1 byte a Counter singleton-nak)
+    .label __SI_Counter = __MOD_counter + $0059
+```
+
 ### BSS Memória Elrendezés Dinamikus Singleton-oknál
+
+Dinamikus importnál (`import module` + `load_module()`) a singleton BSS az **importer BSS-ében** van:
 
 ```
 __program_end
@@ -1065,6 +1098,10 @@ __program_end
           │
           └── __singletons_end = SSP start
 ```
+
+**Fontos különbség:**
+- Statikus: `__SI_ClassName` a modul BSS-ére mutat (modul része)
+- Dinamikus: `__DSI_module_ClassName` az importer BSS-ében (külön allokálva)
 
 ## Globális Tuple Export/Import
 

@@ -519,6 +519,7 @@ Naked functions receive parameters in registers:
 **Rules:**
 - Function must handle register preservation itself
 - Cannot combine with `@irq` decorator
+- **Module export:** `@naked` functions can be exported from modules, the PMI contains the `is_naked` flag
 
 > **Note:** For efficient calling from IRQ handlers, see the `@irq_helper` decorator (section 5.4).
 
@@ -552,7 +553,7 @@ The C64 has two IRQ vectors:
 
 > **Important:** `@irq_hook` is only suitable for CIA system timer tasks (music playback, frame counter, etc.). For raster or other VIC interrupts, use `@irq` or `@irq_raw`, because the Kernal IRQ handler doesn't acknowledge VIC interrupts and doesn't filter interrupt sources.
 
-**@irq_helper:** Helper function for calling from IRQ handler. Uses `irq_tmp0-5` registers.
+**@irq_helper:** Helper function for calling from IRQ handler. Uses `irq_tmp0-5` registers. **Module export:** `@irq_helper` functions can be exported from modules, the PMI contains the `is_irq_helper` flag.
 
 ```python
 # General IRQ - keyboard works

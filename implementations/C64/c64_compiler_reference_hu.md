@@ -519,6 +519,7 @@ A naked függvények regiszterekben kapják a paramétereket:
 **Szabályok:**
 - A függvénynek magának kell gondoskodnia a regiszter megőrzésről
 - Nem kombinálható `@irq` dekorátorral
+- **Modul export:** `@naked` függvények exportálhatók modulból, a PMI tartalmazza az `is_naked` flaget
 
 > **Megjegyzés:** IRQ handler-ből való hatékony híváshoz lásd az `@irq_helper` dekorátort (5.4 fejezet).
 
@@ -552,7 +553,7 @@ A C64-en két IRQ vector van:
 
 > **Fontos:** Az `@irq_hook` csak a CIA system timer-hez alkalmas (zene lejátszás, frame számláló, stb.). Raster vagy más VIC interruptokhoz használj `@irq`-t vagy `@irq_raw`-t, mert a Kernal IRQ handler nem acknowledgeol VIC interruptokat és nem végez forrás-szűrést.
 
-**@irq_helper:** Segédfüggvény IRQ handlerből való híváshoz. `irq_tmp0-5` regisztereket használ.
+**@irq_helper:** Segédfüggvény IRQ handlerből való híváshoz. `irq_tmp0-5` regisztereket használ. **Modul export:** `@irq_helper` függvények exportálhatók modulból, a PMI tartalmazza az `is_irq_helper` flaget.
 
 ```python
 # Általános IRQ - keyboard működik
