@@ -473,7 +473,68 @@ A relokáció ugyanúgy működik: a forrás kód a fő program végén, indulá
 
 > **Figyelem:** Az `@origin` csak a `main()` függvényen használható!
 
-### 4.7 IRQ dekorátorok
+### 4.7 @cartridge(mode, stack_start)
+
+EasyFlash cartridge kimenet generálása (.crt fájl). A program közvetlenül ROM-ból fut.
+
+```python
+@cartridge              # mode=8, stack=0x0800 (alapértelmezett)
+@cartridge()            # ugyanaz
+@cartridge(8)           # 8KB mód
+@cartridge(16)          # 16KB mód
+@cartridge(8, 0x0300)   # 8KB mód, stack $0300-nál
+def main():
+    pass
+```
+
+**Paraméterek:**
+
+| Paraméter     | Érték     | Leírás                            |
+|---------------|-----------|-----------------------------------|
+| `mode`        | 8 vagy 16 | EasyFlash mód (8KB vagy 16KB ROM) |
+| `stack_start` | cím       | SSP kezdőcím (default: $0800)     |
+
+**Memória térkép (8KB mód, Kernal bekapcsolva):**
+
+```
+$0000-$00FF  Zero Page (RAM) - PyCo runtime
+$0100-$01FF  Hardware Stack (RAM)
+$0200-$07FF  Szabad RAM (bank dispatcher itt lehet multi-bank módban)
+$0800+       SSP alapértelmezett kezdőcím
+$8000-$9FFF  ROML - Cartridge ROM (8KB)
+$A000-$BFFF  Szabad RAM (8KB) - 8KB módban!
+$C000-$CFFF  Szabad RAM (4KB)
+$D000-$DFFF  I/O + EasyFlash regiszterek
+  $DE00      Bank regiszter (0-63)
+  $DE02      Mód regiszter ($06=8KB, $07=16KB)
+  $DF00-$DF7F  SRAM - SMC helper ide másolódik
+$E000-$FFFF  Kernal ROM (bekapcsolva)
+```
+
+**Generált fájlok:**
+
+| Fájl típus | Leírás                                |
+|------------|---------------------------------------|
+| `.crt`     | EasyFlash cartridge (VICE, Ultimate)  |
+| `.prg`     | NEM generálódik cartridge módban!     |
+
+**Dekorátor kompatibilitás:**
+
+| Dekorátor    | Működik? | Megjegyzés                          |
+|--------------|----------|-------------------------------------|
+| `@lowercase` | ✓        | Normálisan működik                  |
+| `@noreturn`  | ✓        | Implicit (cartridge sosem tér vissza) |
+| `@irq`       | ✓        | Teljes raster IRQ támogatás         |
+| `@irq_raw`   | ✓        | Minimális overhead IRQ              |
+| `@kernal`    | ✗        | A Kernal alapértelmezetten be van kapcsolva |
+
+**SMC Helper SRAM-ban:**
+
+A nagy méretű (≥64 byte) fill és copy műveletek SMC (Self-Modifying Code) helpert használnak. Cartridge módban ez a helper a boot kódban másolódik az SRAM-ba ($DF00, 52 byte), mert a ROM-ból nem módosítható.
+
+> **Részletek:** Lásd `docs/implementations/C64/native/cartridge_plan_hu.md`
+
+### 4.8 IRQ dekorátorok
 
 Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5. IRQ kezelés](#5-irq-kezelés).
 
@@ -484,7 +545,7 @@ Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5
 | `@irq_hook`   | $0314/$0315 (Kernal)  | Leggyorsabb, Kernal hook       |
 | `@irq_helper` | N/A                   | Segédfüggvény IRQ-ból híváshoz |
 
-### 4.8 @naked
+### 4.9 @naked
 
 Tisztán assembly-ben írt függvényekhez. A compiler csak egy címkét generál, semmi mást - nincs prologue, epilogue, vagy bármilyen PyCo overhead.
 

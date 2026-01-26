@@ -473,7 +473,68 @@ Relocation works the same: source code at program end, copied to target at start
 
 > **Note:** `@origin` can only be used on the `main()` function!
 
-### 4.7 IRQ Decorators
+### 4.7 @cartridge(mode, stack_start)
+
+Generate EasyFlash cartridge output (.crt file). The program runs directly from ROM.
+
+```python
+@cartridge              # mode=8, stack=0x0800 (defaults)
+@cartridge()            # same
+@cartridge(8)           # 8KB mode
+@cartridge(16)          # 16KB mode
+@cartridge(8, 0x0300)   # 8KB mode, stack at $0300
+def main():
+    pass
+```
+
+**Parameters:**
+
+| Parameter     | Value     | Description                       |
+|---------------|-----------|-----------------------------------|
+| `mode`        | 8 or 16   | EasyFlash mode (8KB or 16KB ROM)  |
+| `stack_start` | address   | SSP start address (default: $0800)|
+
+**Memory map (8KB mode, Kernal enabled):**
+
+```
+$0000-$00FF  Zero Page (RAM) - PyCo runtime
+$0100-$01FF  Hardware Stack (RAM)
+$0200-$07FF  Free RAM (bank dispatcher here in multi-bank mode)
+$0800+       SSP default start address
+$8000-$9FFF  ROML - Cartridge ROM (8KB)
+$A000-$BFFF  Free RAM (8KB) - in 8KB mode!
+$C000-$CFFF  Free RAM (4KB)
+$D000-$DFFF  I/O + EasyFlash registers
+  $DE00      Bank register (0-63)
+  $DE02      Mode register ($06=8KB, $07=16KB)
+  $DF00-$DF7F  SRAM - SMC helper copied here
+$E000-$FFFF  Kernal ROM (enabled)
+```
+
+**Generated files:**
+
+| File type | Description                           |
+|-----------|---------------------------------------|
+| `.crt`    | EasyFlash cartridge (VICE, Ultimate)  |
+| `.prg`    | NOT generated in cartridge mode!      |
+
+**Decorator compatibility:**
+
+| Decorator    | Works? | Notes                               |
+|--------------|--------|-------------------------------------|
+| `@lowercase` | ✓      | Works normally                      |
+| `@noreturn`  | ✓      | Implicit (cartridge never returns)  |
+| `@irq`       | ✓      | Full raster IRQ support             |
+| `@irq_raw`   | ✓      | Minimal overhead IRQ                |
+| `@kernal`    | ✗      | Kernal is enabled by default        |
+
+**SMC Helper in SRAM:**
+
+Large (≥64 byte) fill and copy operations use an SMC (Self-Modifying Code) helper. In cartridge mode, this helper is copied to SRAM ($DF00, 52 bytes) by the boot code, since ROM cannot be modified.
+
+> **Details:** See `docs/implementations/C64/native/cartridge_plan_en.md`
+
+### 4.8 IRQ Decorators
 
 Four decorators are available for IRQ handling. Detailed description: [5. IRQ Handling](#5-irq-handling).
 
@@ -484,7 +545,7 @@ Four decorators are available for IRQ handling. Detailed description: [5. IRQ Ha
 | `@irq_hook`     | $0314/$0315 (Kernal)    | Fastest, Kernal hook           |
 | `@irq_helper`   | N/A                     | Helper function for IRQ calls  |
 
-### 4.8 @naked
+### 4.9 @naked
 
 For functions written entirely in assembly. The compiler generates only a label, nothing else - no prologue, epilogue, or any PyCo overhead.
 
