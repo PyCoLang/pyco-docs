@@ -1877,6 +1877,31 @@ def main():
 
 > **Megjegyzés:** Az `alias[alias[T]]` (beágyazott alias) **nem megengedett**! Egy pointer-re mutató pointer felesleges komplexitás lenne. Használj egyszerű `alias[T]`-t.
 
+**String literálok átadása:**
+
+String és screen code literálok közvetlenül átadhatók `alias[string]` paramétereknek. A compiler a data szegmensben tárolt literál címét adja át:
+
+```python
+def print_text(s: alias[string]):
+    # ... s használata ...
+
+print_text("hello")      # PETSCII string literál
+print_text(s"hello")     # Screen code literál
+```
+
+> **Figyelem:** A string literálok **módosíthatók** PyCo-ban! Ha egy függvény módosítja a stringet az alias-on keresztül, maga a literál változik meg a memóriában. Ez kihat a literál minden további használatára:
+>
+> ```python
+> def modify(s: alias[string]):
+>     s[0] = 'X'
+>
+> print("hello")    # Kiírja: "hello"
+> modify("hello")   # Módosítja a literált!
+> print("hello")    # Kiírja: "Xello" - ugyanaz a literál, most már módosítva!
+> ```
+>
+> Ez a viselkedés hasznos lehet template stringekhez (pl. pontszám kijelzés), de tudatosságot igényel.
+
 ### 5.6 Alias visszatérési értékként
 
 > **SZABÁLY:** Összetett típusok visszatérése **csak alias-ként** lehetséges!

@@ -1897,6 +1897,31 @@ def main():
 
 > **Note:** `alias[alias[T]]` (nested alias) is **not allowed**! A pointer pointing to a pointer would be unnecessary complexity. Use simple `alias[T]`.
 
+**Passing string literals:**
+
+String and screen code literals can be passed directly to `alias[string]` parameters. The compiler passes the address of the literal stored in the data segment:
+
+```python
+def print_text(s: alias[string]):
+    # ... use s ...
+
+print_text("hello")      # PETSCII string literal
+print_text(s"hello")     # Screen code literal
+```
+
+> **Warning:** String literals are **mutable** in PyCo! If a function modifies the string through the alias, the literal itself changes in memory. This affects all subsequent uses of that literal:
+>
+> ```python
+> def modify(s: alias[string]):
+>     s[0] = 'X'
+>
+> print("hello")    # Prints: "hello"
+> modify("hello")   # Modifies the literal!
+> print("hello")    # Prints: "Xello" - same literal, now modified!
+> ```
+>
+> This behavior can be useful for template strings (e.g., score displays) but requires awareness.
+
 ### 5.6 Alias as Return Value
 
 > **RULE:** Returning composite types is **only possible as alias**!

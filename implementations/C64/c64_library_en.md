@@ -26,6 +26,7 @@ This document describes the built-in include files and library modules available
 4. [Library Modules](#library-modules)
    - [compress - Data Compression](#compress---data-compression)
    - [diskio - Disk I/O](#diskio---disk-io)
+   - [easyflash - EasyFlash Cartridge](#easyflash---easyflash-cartridge)
 
 ---
 
@@ -968,6 +969,258 @@ def load_level():
 
     load_module(diskio)
     diskio.load_file("LEVEL1", 0xC000)
+```
+
+---
+
+### easyflash - EasyFlash Cartridge
+
+**Source:** `src/pyco/lib/easyflash.pyco`
+**Compiled:** `src/pyco/lib/imports/easyflash.pm`
+
+Provides functions for EasyFlash cartridge operations: bank switching, ROM reading, and flash programming via EAPI. Only usable in cartridge mode (`@cartridge` decorator).
+
+#### Hardware Overview
+
+| Register | Address | Description                         |
+|----------|---------|-------------------------------------|
+| EF_BANK  | $DE00   | Bank select (0-63), write-only      |
+| EF_SLOT  | $DE01   | Slot select (optional)              |
+| EF_CTRL  | $DE02   | Control register, write-only        |
+
+| Control Mode | Value | Description                             |
+|--------------|-------|-----------------------------------------|
+| EF_OFF       | $04   | Cartridge ROM disabled                  |
+| EF_8K        | $06   | 8KB mode (ROML at $8000)                |
+| EF_16K       | $07   | 16KB mode (ROML at $8000, ROMH at $A000)|
+| EF_LED       | $80   | LED bit (OR with mode)                  |
+
+#### Constants Include File
+
+For direct hardware access, use the include file:
+
+```python
+include("easyflash")
+
+@cartridge
+def main():
+    byte[EF_CTRL] = EF_8K               # Set 8K mode
+    byte[EF_BANK] = 5                   # Select bank 5
+    value: byte = byte[ROML_BASE + 0x100]  # Read from ROML
+```
+
+Available constants: `EF_BANK`, `EF_SLOT`, `EF_CTRL`, `EF_OFF`, `EF_8K`, `EF_16K`, `EF_LED`, `ROML_BASE`, `ROMH_BASE`, `CHIP_AM29F040`, `CHIP_SST39SF040`, and EAPI entry points.
+
+#### Register Functions (No Init Required)
+
+**`set_bank(bank: byte)`**
+
+Set current bank (0-63). Writes to $DE00 and shadow variable.
+
+> **Warning:** Only safe when program runs from RAM, or switching to bank 0. Switching to a different bank while code runs from ROM will crash!
+
+**`get_bank() -> byte`**
+
+Get current bank from shadow variable (register is write-only).
+
+**`set_mode_8k()`**
+
+Switch to 8KB mode. ROML visible at $8000-$9FFF.
+
+**`set_mode_16k()`**
+
+Switch to 16KB mode. ROML at $8000-$9FFF, ROMH at $A000-$BFFF.
+
+**`disable()`**
+
+Disable cartridge ROM. RAM visible everywhere.
+
+**`led_on()` / `led_off()`**
+
+Control the EasyFlash LED.
+
+#### ROM Reading Functions (No Init Required)
+
+**`read_byte(bank: byte, offset: word) -> byte`**
+
+Read a single byte from ROM bank. Uses SRAM-resident routine for safe bank switching.
+
+| Parameter | Type | Description                       |
+|-----------|------|-----------------------------------|
+| `bank`    | byte | Bank number (0-63)                |
+| `offset`  | word | Offset within bank (0-$1FFF)      |
+| **Returns** | byte | Byte value from ROM             |
+
+**`read(bank: byte, offset: word, dest: alias[array[byte, 1]], size: word)`**
+
+Read a block of bytes from ROM to RAM.
+
+| Parameter | Type                    | Description                 |
+|-----------|-------------------------|-----------------------------|
+| `bank`    | byte                    | Bank number (0-63)          |
+| `offset`  | word                    | Offset within bank          |
+| `dest`    | `alias[array[byte, 1]]` | Destination array           |
+| `size`    | word                    | Number of bytes to read     |
+
+#### EAPI Initialization Functions
+
+**`init() -> bool`**
+
+Auto-detect chip type via JEDEC ID and initialize EAPI. Copies the appropriate EAPI driver to SRAM ($DF80-$DFFF).
+
+| Returns | Description                                  |
+|---------|----------------------------------------------|
+| True    | Chip detected, EAPI initialized              |
+| False   | Unknown chip type                            |
+
+Supported chips:
+- AM29F040 (EasyFlash 1, VICE emulator) - JEDEC ID: $01A4
+- SST39SF040 (EasyFlash 3) - JEDEC ID: $BFB7
+
+**`init_ef1() -> bool`**
+
+Initialize for EasyFlash 1 / VICE (AM29F040 only). Smaller code than `init()` due to DCE.
+
+**`init_ef3() -> bool`**
+
+Initialize for EasyFlash 3 (SST39SF040 only). Smaller code than `init()` due to DCE.
+
+#### Flash Writing Functions (Init Required!)
+
+> **Important:** Call `init()`, `init_ef1()`, or `init_ef3()` before using these functions!
+
+**`write_byte(bank: byte, offset: word, value: byte) -> bool`**
+
+Write a single byte to flash.
+
+| Parameter | Type | Description                  |
+|-----------|------|------------------------------|
+| `bank`    | byte | Bank number (0-63)           |
+| `offset`  | word | Offset within bank           |
+| `value`   | byte | Byte to write                |
+| **Returns** | bool | True on success            |
+
+**`write(bank: byte, offset: word, src: alias[array[byte, 1]], size: word) -> bool`**
+
+Write a block of bytes to flash.
+
+| Parameter | Type                    | Description                |
+|-----------|-------------------------|----------------------------|
+| `bank`    | byte                    | Bank number (0-63)         |
+| `offset`  | word                    | Offset within bank         |
+| `src`     | `alias[array[byte, 1]]` | Source array               |
+| `size`    | word                    | Number of bytes to write   |
+| **Returns** | bool                  | True on success            |
+
+**`erase_sector(bank: byte) -> bool`**
+
+Erase a flash sector (64KB = 8 banks). Takes ~1-2 seconds!
+
+| Parameter | Type | Description                        |
+|-----------|------|------------------------------------|
+| `bank`    | byte | Any bank in the sector (0-63)      |
+| **Returns** | bool | True on success                  |
+
+#### Chip Detection
+
+**`detect_chip() -> word`**
+
+Detect flash chip type via JEDEC ID read.
+
+| Returns     | Description                           |
+|-------------|---------------------------------------|
+| `$01A4`     | AM29F040 (EasyFlash 1, VICE)          |
+| `$BFB7`     | SST39SF040 (EasyFlash 3)              |
+| Other value | Unknown chip                          |
+
+#### Function Summary
+
+| Function       | init() Required? | Description                      |
+|----------------|------------------|----------------------------------|
+| `set_bank`     | No               | Set current bank (0-63)          |
+| `get_bank`     | No               | Get current bank                 |
+| `set_mode_8k`  | No               | Switch to 8KB mode               |
+| `set_mode_16k` | No               | Switch to 16KB mode              |
+| `disable`      | No               | Disable cartridge ROM            |
+| `led_on/off`   | No               | Control LED                      |
+| `read_byte`    | No               | Read byte from ROM               |
+| `read`         | No               | Read block from ROM              |
+| `detect_chip`  | No               | Detect flash chip type           |
+| `init`         | -                | Auto-detect and init EAPI        |
+| `init_ef1`     | -                | Init for AM29F040                |
+| `init_ef3`     | -                | Init for SST39SF040              |
+| `write_byte`   | **Yes**          | Write byte to flash              |
+| `write`        | **Yes**          | Write block to flash             |
+| `erase_sector` | **Yes**          | Erase 64KB sector                |
+
+#### SRAM Usage
+
+The module uses EasyFlash SRAM ($DF00-$DFFF):
+
+| Address       | Size    | Purpose                          |
+|---------------|---------|----------------------------------|
+| $DF00-$DF33   | 52 bytes| SMC Helper (shared)              |
+| $DF34-$DF36   | 3 bytes | Shadow registers & init flag     |
+| $DF37-$DF3D   | 7 bytes | EAPI argument passing            |
+| $DF40-$DF7F   | 64 bytes| Safe read trampoline             |
+| $DF80-$DFFF   | 128 bytes| EAPI runtime (after init)       |
+
+#### Usage Example - ROM Reading
+
+```python
+from easyflash import set_bank, read_byte, read
+
+@cartridge
+def main():
+    buffer: array[byte, 256][0xC000]
+    value: byte
+
+    # Read single byte from bank 5, offset $0100
+    set_bank(0)  # Initialize shadow first!
+    value = read_byte(5, 0x0100)
+    print(value)
+
+    # Read block to RAM
+    read(5, 0x0000, buffer, 256)
+```
+
+#### Usage Example - Flash Programming
+
+```python
+from easyflash import init, erase_sector, write
+
+@cartridge
+def main():
+    data: array[byte, 256][0xC000] = [0x55]
+
+    # Initialize EAPI (auto-detect chip)
+    if not init():
+        print("unknown chip!")
+        return
+
+    # Erase sector (banks 8-15)
+    if not erase_sector(8):
+        print("erase error")
+        return
+
+    # Write data
+    if not write(8, 0, data, 256):
+        print("write error")
+        return
+
+    print("done")
+```
+
+#### Usage Example - Power User (Smaller Code)
+
+```python
+from easyflash import init_ef1, write_byte
+
+@cartridge
+def main():
+    # For VICE or EasyFlash 1 only - smaller code!
+    init_ef1()
+    write_byte(8, 0x0000, 0x42)
 ```
 
 ---

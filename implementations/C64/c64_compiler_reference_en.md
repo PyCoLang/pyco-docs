@@ -47,7 +47,7 @@ PyCo **disables both ROMs** by default (+16KB RAM):
 ├──────────────────────────────────────────────────────────────┤
 │ $0000 - $00FF  │ 256 B  │ Zero Page (system + PyCo ZP)       │
 │ $0100 - $01FF  │ 256 B  │ Hardware Stack (6502)              │
-│ $0200 - $03FF  │ 512 B  │ System area                        │
+│ $0200 - $03FF  │ 512 B  │ System area (see note)             │
 │ $0400 - $07FF  │ 1 KB   │ Screen memory (default)            │
 │ $0801 - $BFFF  │ ~46 KB │ PyCo program area                  │
 │                │        │ (BASIC ROM disabled)               │
@@ -60,6 +60,10 @@ PyCo **disables both ROMs** by default (+16KB RAM):
 │ $E000 - $FFFF  │ 8 KB   │ RAM (Kernal ROM disabled!)         │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Note on $0200-$03FF area:**
+- **PRG mode:** Free for use
+- **Cartridge mode (`@cartridge`):** $0200-$025F (~60 bytes) is **RESERVED** for the bank dispatcher! The $0277-$028D area is also reserved for Kernal-compatible variables (keyboard buffer, color, key repeat).
 
 With the `@kernal` decorator, the Kernal ROM remains active (see [4.2 @kernal](#42-kernal)).
 
@@ -255,6 +259,45 @@ def main():
 ```
 
 The C64 starts in uppercase/graphics mode by default. The `@lowercase` decorator switches to lowercase/uppercase mode.
+
+#### Screen Code String Literals (`s"..."`)
+
+The C64 VIC chip works directly with **screen codes**, not PETSCII. The `s"..."` syntax enables defining strings converted to screen codes at compile time:
+
+```python
+SCREEN = 0x0400
+
+def example():
+    row: array[char, 40][SCREEN]
+
+    row = "Hello!"         # PETSCII encoding (Kernal-compatible)
+    row = s"Hello!"        # Screen code encoding (direct VIC display)
+```
+
+**Screen code vs PETSCII:**
+
+| Syntax    | Encoding    | Usage                                      |
+| --------- | ----------- | ------------------------------------------ |
+| `"..."`   | PETSCII     | `print()`, file operations, Kernal routines|
+| `s"..."`  | Screen code | Direct screen RAM writes                   |
+
+**Character conversion based on `@lowercase` decorator:**
+
+| Character  | Uppercase mode (default) | Mixed mode (`@lowercase`) |
+| ---------- | ------------------------ | ------------------------- |
+| `'A'-'Z'`  | 1-26 ($01-$1A)           | 65-90 ($41-$5A)           |
+| `'a'-'z'`  | 1-26 (= uppercase)       | 1-26 ($01-$1A)            |
+| `'@'`      | 0 ($00)                  | 0 ($00)                   |
+| Space, 0-9 | Unchanged                | Unchanged                 |
+
+```python
+@lowercase
+def main():
+    screen: array[char, 40][SCREEN]
+    screen = s"Hello World"  # H=72, e=5, l=12, ..., W=87, o=15, ...
+```
+
+> **Important:** Use `array[char, N]` type (not `array[byte, N]`), because `char` arrays use special copy logic that skips the Pascal string length byte.
 
 ### 4.2 @kernal
 

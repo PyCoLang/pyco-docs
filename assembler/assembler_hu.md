@@ -502,3 +502,155 @@ src/pyco/assembler/
 A kimenet C64 PRG formátumú:
 - Első 2 byte: load address (little-endian, általában $0801)
 - Többi byte: a program kódja
+
+---
+
+## Inline Assembly PyCo-ban (`__asm__`)
+
+A PyCo támogatja az inline assembly-t az `__asm__` intrinsic függvénnyel. Ez lehetővé teszi nyers assembly kód beillesztését PyCo függvényekbe.
+
+### Alapszintaxis
+
+```python
+def main():
+    __asm__("""
+        lda #$00
+        sta $d020
+    """)
+```
+
+### Változó behelyettesítés
+
+A `{variable}` szintaxissal hivatkozhatsz PyCo változókra és paraméterekre az inline assembly-ben. A compiler automatikusan behelyettesíti a megfelelő assembly kifejezést.
+
+#### Behelyettesítési szabályok
+
+| Típus                  | Szintaxis     | Eredmény        | Példa                          |
+|------------------------|---------------|-----------------|--------------------------------|
+| UPPERCASE konstans     | `{CONST}`     | `$érték`        | `{SCREEN}` → `$0400`           |
+| Memory-mapped változó  | `{mapped}`    | `$cím`          | `{border}` → `$D020`           |
+| Stack változó/paraméter| `{param}`     | offset szám     | `{la}` → `0`                   |
+| Ismeretlen név         | `{label}`     | változatlan     | `{my_label}` → `{my_label}`    |
+
+#### Példák
+
+**UPPERCASE konstansok:**
+```python
+SCREEN_RAM = 0x0400
+BORDER = 0xD020
+
+def main():
+    __asm__("""
+        lda #$41
+        sta {SCREEN_RAM}    // → sta $0400
+        lda #$01
+        sta {BORDER}        // → sta $D020
+    """)
+```
+
+**Memory-mapped változók:**
+```python
+def main():
+    border: byte[0xD020]
+    screen: byte[0xD021]
+
+    __asm__("""
+        lda #$01
+        sta {border}        // → sta $D020
+        lda #$02
+        sta {screen}        // → sta $D021
+    """)
+```
+
+**Stack paraméterek és lokális változók:**
+
+A stack-alapú változóknál a `{var}` az offset értéket adja vissza. A programozónak kell a `(FP),y` címzést használni:
+
+```python
+def double_value(value: byte) -> byte:
+    result: byte
+    __asm__("""
+        ldy #{value}        // → ldy #0 (value offset)
+        lda (FP),y          // érték betöltése
+        asl                 // duplázás
+        ldy #{result}       // → ldy #1 (result offset)
+        sta (FP),y          // eredmény tárolása
+    """)
+    return result
+```
+
+**Kernal hívás paraméterrel:**
+```python
+def chkin(la: byte):
+    """Set input channel. CHKIN expects X=logical file."""
+    __asm__("""
+        ldy #{la}           // → ldy #0
+        lda (FP),y          // paraméter betöltése A-ba
+        tax                 // átrakás X-be
+        jsr $FFC6           // Kernal hívás
+    """)
+```
+
+### Alias paraméterek kezelése
+
+Az `alias` típusú paraméterek 2 bájtos pointerek a stack-en. Az értékük eléréséhez:
+
+1. Be kell tölteni a pointer címét a stack-ről
+2. Majd indirekt címzéssel hozzáférni az adathoz
+
+```python
+def screen_size(cols: alias[byte], rows: alias[byte]):
+    """Get screen size. SCREEN returns X=cols, Y=rows."""
+    __asm__("""
+        jsr $FFED           // Kernal: X=cols, Y=rows
+        stx tmp2            // cols mentése
+        sty tmp3            // rows mentése
+
+        // Store to cols alias
+        ldy #{cols}         // → ldy #0 (cols pointer offset)
+        lda (FP),y          // pointer lo
+        sta tmp0
+        iny
+        lda (FP),y          // pointer hi
+        sta tmp1
+        lda tmp2            // cols érték
+        ldy #0
+        sta (tmp0),y        // tárolás a pointer által mutatott címre
+
+        // Store to rows alias
+        ldy #{rows}         // → ldy #2 (rows pointer offset)
+        lda (FP),y
+        sta tmp0
+        iny
+        lda (FP),y
+        sta tmp1
+        lda tmp3            // rows érték
+        ldy #0
+        sta (tmp0),y
+    """)
+```
+
+### Fontos tudnivalók
+
+1. **Kommentek**: Az inline assembly-ben `//` kommenteket használj, **NEM** `;`-t! A beépített assembler nem támogatja a `;` kommenteket.
+
+2. **Stack változók**: A `{var}` csak az **offset számot** adja vissza. A programozó felelőssége a helyes `(FP),y` címzés használata.
+
+3. **Ismeretlen nevek**: Ha egy `{name}` nem ismert változó, változatlanul marad a kimenetben. Ez hasznos lehet assembly label hivatkozásokhoz.
+
+4. **ZP változók**: Ha a függvény leaf-function optimalizációt használ (O4+), a lokális változók Zero Page-re kerülnek, és a `{var}` a közvetlen ZP címet adja vissza.
+
+### Mikor használj inline assembly-t?
+
+- **Kernal hívások**: Ahol speciális regiszter beállítás kell
+- **Kritikus ciklusok**: Ahol minden ciklus számít
+- **Hardver közvetlen elérés**: Speciális timing vagy I/O műveletek
+- **Wrapper függvények**: Külső könyvtárak (zenemotor, stb.) hívásához
+
+### Alternatívák
+
+Mielőtt inline assembly-t használnál, fontold meg:
+
+- **`@mapped` dekorátor**: Kernal rutinok közvetlen hívásához
+- **`@naked` dekorátor**: Teljes assembly függvényekhez, regiszter-alapú paraméterekkel
+- **Memory-mapped változók**: Hardver regiszterek eléréséhez (`border: byte[0xD020]`)

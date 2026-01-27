@@ -47,7 +47,7 @@ A PyCo alapértelmezetten **mindkét ROM-ot kikapcsolja** (+16KB RAM):
 ├──────────────────────────────────────────────────────────────┤
 │ $0000 - $00FF  │ 256 B  │ Zero Page (rendszer + PyCo ZP)     │
 │ $0100 - $01FF  │ 256 B  │ Hardware Stack (6502)              │
-│ $0200 - $03FF  │ 512 B  │ Rendszer terület                   │
+│ $0200 - $03FF  │ 512 B  │ Rendszer terület (lásd megjegyzés) │
 │ $0400 - $07FF  │ 1 KB   │ Képernyő memória (alapértelmezett) │
 │ $0801 - $BFFF  │ ~46 KB │ PyCo program terület               │
 │                │        │ (BASIC ROM kikapcsolva)            │
@@ -60,6 +60,10 @@ A PyCo alapértelmezetten **mindkét ROM-ot kikapcsolja** (+16KB RAM):
 │ $E000 - $FFFF  │ 8 KB   │ RAM (Kernal ROM kikapcsolva!)      │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+**Megjegyzés a $0200-$03FF területről:**
+- **PRG módban:** Szabad használatra
+- **Cartridge módban (`@cartridge`):** A $0200-$025F (~60 byte) **FOGLALT** a bank dispatcher számára! A $0277-$028D terület szintén foglalt a Kernal-kompatibilis változók miatt (keyboard buffer, szín, key repeat).
 
 A `@kernal` dekorátorral a Kernal ROM aktív marad (lásd [4.2 @kernal](#42-kernal)).
 
@@ -255,6 +259,45 @@ def main():
 ```
 
 A C64 alapértelmezetten nagybetűs/grafikus módban indul. A `@lowercase` dekorátor kisbetűs/nagybetűs módba kapcsolja.
+
+#### Screen code string literálok (`s"..."`)
+
+A C64 VIC chip közvetlenül **screen code**-okkal dolgozik, nem PETSCII-vel. A `s"..."` szintaxis lehetővé teszi screen code-ra konvertált stringek definiálását fordítási időben:
+
+```python
+SCREEN = 0x0400
+
+def example():
+    row: array[char, 40][SCREEN]
+
+    row = "Hello!"         # PETSCII kódolás (Kernal-kompatibilis)
+    row = s"Hello!"        # Screen code kódolás (közvetlen VIC megjelenítés)
+```
+
+**Screen code vs PETSCII:**
+
+| Szintaxis | Kódolás     | Használat                                  |
+| --------- | ----------- | ------------------------------------------ |
+| `"..."`   | PETSCII     | `print()`, fájlműveletek, Kernal rutinok   |
+| `s"..."`  | Screen code | Közvetlen képernyő RAM írás                |
+
+**Karakterkonverzió az `@lowercase` dekorátortól függően:**
+
+| Karakter   | Uppercase mód (alap) | Mixed mód (`@lowercase`) |
+| ---------- | -------------------- | ------------------------ |
+| `'A'-'Z'`  | 1-26 ($01-$1A)       | 65-90 ($41-$5A)          |
+| `'a'-'z'`  | 1-26 (= nagybetű)    | 1-26 ($01-$1A)           |
+| `'@'`      | 0 ($00)              | 0 ($00)                  |
+| Space, 0-9 | Változatlan          | Változatlan              |
+
+```python
+@lowercase
+def main():
+    screen: array[char, 40][SCREEN]
+    screen = s"Hello World"  # H=72, e=5, l=12, ..., W=87, o=15, ...
+```
+
+> **Fontos:** Az `array[char, N]` típust kell használni (nem `array[byte, N]`), mert a `char` tömb speciális másolási logikát használ, ami átlépi a Pascal string hossz byte-ját.
 
 ### 4.2 @kernal
 
