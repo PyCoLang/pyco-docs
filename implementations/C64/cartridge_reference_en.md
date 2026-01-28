@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Reference
 
-**Version:** 1.0
-**Date:** 2026-01-26
+**Version:** 1.1
+**Date:** 2026-01-28
 
 ## Overview
 
@@ -39,6 +39,20 @@ EasyFlash cartridge support for PyCo:
 
 **8KB mode advantages:** Only ROML is cartridge-controlled. The rest of memory ($A000-$FFFF) is under $01 control -> Kernal can be disabled!
 
+### PyCo Cartridge Operating Modes
+
+PyCo supports two different 8KB modes:
+
+| Decorator       | Code Location | Free RAM              | Use Case                       |
+|-----------------|---------------|-----------------------|--------------------------------|
+| `@cartridge(8)` | **ROMH**      | $0000-$9FFF (40KB+!)  | **Recommended** - maximum RAM  |
+| `@cartridge(-8)`| ROML          | Scattered             | Legacy - BASIC extensions      |
+| `@cartridge(16)`| ROML+ROMH     | $C000+                | Large programs                 |
+
+**ROMH mode (mode=8):** The program runs from ROMH ($A000), so **$8000-$9FFF is RAM**! This provides 40KB+ contiguous RAM ($0000-$9FFF). Kernal remains available.
+
+**ROML mode (mode=-8):** The program runs from ROML ($8000). $A000-$BFFF is free RAM. Legacy behavior, for BASIC extensions.
+
 ### Control Register ($DE02)
 
 | Value | Bits      | Meaning                              |
@@ -53,7 +67,33 @@ EasyFlash cartridge support for PyCo:
 
 ## Memory Map
 
-### 8KB Cartridge Mode + Kernal OFF
+### ROMH Mode (@cartridge(8)) - Recommended!
+
+PLA Mode 6: EXROM=0, GAME=0, LORAM=0, HIRAM=1 ($01=$36)
+
+```
+$0000-$00FF  Zero Page (RAM) - PyCo runtime
+$0100-$01FF  Hardware Stack (RAM)
+$0200-$025F  Bank dispatcher (~60 bytes) - RESERVED!
+$0260-$02FF  Free RAM
+$0300-$07FF  Free RAM (includes cassette buffer)
+$0800+       SSP default start address
+$8000-$9FFF  **RAM** (8KB) - free to use!
+$A000-$BFFF  ROMH - Program code (8KB Flash ROM)
+$C000-$CFFF  RAM (4KB)
+$D000-$DFFF  I/O + EasyFlash registers
+  $DE00      Bank register (write-only, 0-63)
+  $DE02      Control register (write-only)
+  $DF00-$DF33  SMC Helper (52 bytes)
+  $DF34-$DF3F  EasyFlash module SRAM variables
+  $DF40-$DF7F  Read trampoline routine
+  $DF80-$DFFF  EAPI area (flash programming)
+$E000-$FFFF  Kernal ROM
+```
+
+**Total: ~40KB contiguous RAM ($0000-$9FFF)!** Kernal is also available.
+
+### ROML Mode (@cartridge(-8))
 
 ```
 $0000-$00FF  Zero Page (RAM) - PyCo runtime
@@ -66,16 +106,10 @@ $8000-$9FFF  ROML - Current bank (8KB Flash ROM)
 $A000-$BFFF  Free RAM (8KB) - can use for data!
 $C000-$CFFF  Free RAM (4KB)
 $D000-$DFFF  I/O + EasyFlash registers
-  $DE00      Bank register (write-only, 0-63)
-  $DE02      Control register (write-only)
-  $DF00-$DF33  SMC Helper (52 bytes)
-  $DF34-$DF3F  EasyFlash module SRAM variables
-  $DF40-$DF7F  Read trampoline routine
-  $DF80-$DFFF  EAPI area (flash programming)
 $E000-$FFFF  Free RAM (8KB) - IRQ vectors here!
 ```
 
-**Total free RAM: ~50KB!** (vs. ~34KB in 16KB mode)
+**Total free RAM: ~50KB!** (but scattered)
 
 ### IMPORTANT: Reserved Addresses
 
@@ -95,21 +129,31 @@ $E000-$FFFF  Free RAM (8KB) - IRQ vectors here!
 ### Syntax
 
 ```python
-@cartridge              # mode=8, stack=0x0800 (defaults)
-@cartridge()            # same
-@cartridge(8)           # mode=8, stack=0x0800
-@cartridge(16)          # mode=16, stack=0x0800
-@cartridge(8, 0x0300)   # mode=8, stack=0x0300
+@cartridge               # mode=8, stack=0x0800 (ROMH mode, recommended)
+@cartridge()             # same
+@cartridge(8)            # ROMH mode - code: $A000, RAM: $8000-$9FFF
+@cartridge(-8)           # ROML mode - code: $8000, RAM: $A000-$BFFF
+@cartridge(16)           # 16KB mode - code: $8000+$A000
+@cartridge(8, 0x8000)    # ROMH mode, stack at $8000 (it's RAM!)
+@cartridge(-8, 0xA000)   # ROML mode, stack at $A000 (it's RAM!)
 def main():
     pass
 ```
 
 ### Parameters
 
-| Parameter     | Type | Default | Description               |
-|---------------|------|---------|---------------------------|
-| `mode`        | int  | 8       | 8KB or 16KB mode          |
-| `stack_start` | int  | 0x0800  | SSP start address         |
+| Parameter     | Type | Default | Description                          |
+|---------------|------|---------|--------------------------------------|
+| `mode`        | int  | 8       | 8 (ROMH), -8 (ROML), or 16 (16KB)    |
+| `stack_start` | int  | 0x0800  | SSP start address                    |
+
+### Stack Address Ranges
+
+| Mode | Valid Stack Range        | Notes                               |
+|------|--------------------------|-------------------------------------|
+| 8    | $0200-$9FFF              | $8000-$9FFF is RAM in ROMH mode!    |
+| -8   | $0200-$7FFF, $A000-$BFFF | $8000 is code area                  |
+| 16   | $0200-$7FFF              | $8000+ and $A000+ are code areas    |
 
 ### Decorator Compatibility
 
@@ -126,6 +170,25 @@ def main():
 ---
 
 ## Startup Sequence
+
+### ROMH Mode (mode=8) - Recommended
+
+1. **Reset** -> Ultimax mode active
+2. CPU reads reset vector from $FFFC/$FFFD (in ROMH @ $E000)
+3. Reset vector -> $8000 (ROML stub)
+4. ROML stub: `JMP $FE00` (ROMH boot code)
+5. **Phase 1** ($FE00, in ROMH): Copy Phase 2 to RAM ($0800), `JMP $0800`
+6. **Phase 2** ($0800, in RAM):
+   - Set 16KB mode ($DE02 = $07) - ROMH visible at $A000
+   - Copy SMC Helper from ROMH to SRAM ($DF00)
+   - Kernal init ($FDA3, $FD50, $FD15, $FF5B)
+   - **Set Mode 6** ($01 = $36) - $8000 becomes RAM, $A000 remains ROMH
+   - `JMP $A000`
+7. **Phase 3** ($A000, in ROMH): SSP/FP init, `JMP main`
+
+**Important:** The $01 register must be set AFTER Kernal init, because RAMTAS ($FD50) overwrites it!
+
+### ROML Mode (mode=-8)
 
 1. **Reset** -> Ultimax mode active
 2. CPU reads reset vector from $FFFC/$FFFD (in ROMH @ $E000)
@@ -285,7 +348,29 @@ This enables:
 
 ## CRT File Format
 
-### Structure
+### Structure - ROMH Mode (mode=8)
+
+```
+Header (64 bytes):
+  - "C64 CARTRIDGE   " signature
+  - EasyFlash type ($0020)
+  - Cartridge name
+
+Bank 0 ROML CHIP (8KB @ $8000):
+  - JMP $FE00 (to ROMH boot code)
+  - NOP
+  - CBM80 signature
+  - (rest is empty, becomes RAM after boot)
+
+Bank 0 ROMH CHIP (8KB @ $A000 after mode switch / $E000 during boot):
+  - Phase 3 code @ $A000 (SSP/FP init + JMP main)
+  - Main program code
+  - Boot code @ $BE00 (= $FE00 during boot mode)
+  - SMC Helper data
+  - Reset vector @ $BFFC -> $8000
+```
+
+### Structure - ROML Mode (mode=-8)
 
 ```
 Header (64 bytes):
@@ -306,7 +391,7 @@ Bank 0 ROMH CHIP (8KB @ $E000):
   - Reset vector @ $FFFC -> $8000
 
 Bank N ROML CHIPs (per module):
-  - Jump table @ $8000
+  - Jump table @ $8000 (ROML) or $A000 (ROMH mode)
   - Module code
   - (16KB mode: ROMH @ $A000 also)
 ```

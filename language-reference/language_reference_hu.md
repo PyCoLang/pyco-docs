@@ -3021,10 +3021,16 @@ Mindkét módszer **ugyanazt a példányt** éri el - az egyiken keresztül vég
 | Szempont              | Singleton viselkedés                                      |
 | --------------------- | --------------------------------------------------------- |
 | Példányszám           | Pontosan egy, a `main()` előtt létrehozva                 |
-| Property alapértékek  | Automatikusan alkalmazva program induláskor               |
-| `__init__` metódus    | NEM hívódik automatikusan - explicit hívás szükséges      |
+| Konstruktor hívás     | `Singleton()` beállítja a default-okat, majd `__init__`   |
+| Auto-init             | Ha nincs `__init__`: default-ok program induláskor        |
 | Memória hely          | `__program_end` után (mapped-only: nincs extra memória)   |
 | Lokális deklaráció    | `scr: Screen` alias-t hoz létre, nem új példányt          |
+
+**Fontos:** A konstruktor hívás (`Singleton()`) ugyanúgy viselkedik singleton-nál és normál osztálynál:
+1. Property default értékek beállítása
+2. `__init__` hívás (ha létezik)
+
+Az egyetlen különbség, hogy singleton-nál nem kell változó deklaráció.
 
 #### Mikor használjunk `@singleton`-t
 

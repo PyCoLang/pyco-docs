@@ -102,7 +102,7 @@ load_module(module_name)
 ### Operation
 
 1. **Save SSP**: Current SSP value = module_base (where module will be loaded)
-2. **Advance SSP FIRST** (IRQ-safe!): SSP += code_size + 4 (compile-time known size + header)
+2. **Advance SSP FIRST** (IRQ-safe!): SSP += code_size + 4 + singleton_bss_size (compile-time known size)
 3. **Disable IRQ + Enable ROM**: SEI, then `$01 = $37` (Kernal ROM on)
 4. **Initialize Kernal I/O**: CLALL ($FFE7) + CLRCH ($FFCC)
 5. **Set filename**: SETNAM ($FFBD) from Pascal string
@@ -1139,23 +1139,31 @@ __MOD_counter:
 
 ### BSS Memory Layout for Dynamic Singletons
 
-With dynamic imports (`import module` + `load_module()`), the singleton BSS is in the **importer's BSS**:
+With dynamic imports (`import module` + `load_module()`), the singleton BSS is **within the module's memory area**, after the code:
 
 ```
-__program_end
+module_base (SSP before load):
     │
-    ├── __SI_LocalSingleton (local singleton data)
+    ├── Header: code_size (2 bytes) + code_end (2 bytes) = 4 bytes
     │
-    ├── __mod_screen (2 bytes - module pointer)
+    ├── Jump table (3 bytes/entry)
     │
-    └── __DSI_screen_Screen (singleton instance data)
+    ├── Module code (functions + data)
+    │
+    └── Singleton BSS (automatically reserved!)
           │
-          └── __singletons_end = SSP start
+          └── singleton_address = module_base + 4 + code_size + offset
 ```
 
-**Key difference:**
-- Static: `__SI_ClassName` points to module BSS (part of module)
-- Dynamic: `__DSI_module_ClassName` in importer's BSS (separately allocated)
+**Important change (v2026-01):**
+- Dynamic singleton BSS is **NOT** in the importer's BSS!
+- The singleton is part of the module and is freed along with it
+- `load_module()` automatically reserves singleton BSS size: `SSP += code_size + 4 + singleton_bss_size`
+- When the module leaves the stack (function returns), the singleton automatically "ceases to exist"
+
+**Key difference (static vs dynamic):**
+- Static: `__SI_ClassName` label, fixed address at compile-time
+- Dynamic: runtime-calculated address: `__mod_X + code_size + singleton_offset`
 
 ## Global Tuple Export/Import
 

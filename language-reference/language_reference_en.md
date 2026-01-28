@@ -3170,10 +3170,16 @@ Both methods access the **same instance** - changes made via one are visible thr
 | Aspect                | Singleton behavior                                    |
 | --------------------- | ----------------------------------------------------- |
 | Instance count        | Exactly one, created before `main()`                  |
-| Property defaults     | Applied automatically at program start                |
-| `__init__` method     | NOT called automatically - call explicitly if needed  |
+| Constructor call      | `Singleton()` sets defaults, then calls `__init__`    |
+| Auto-init             | If no `__init__`: defaults applied at program start   |
 | Memory location       | After `__program_end` (mapped-only: no extra memory)  |
 | Local declaration     | `scr: Screen` creates an alias, not a new instance    |
+
+**Important:** The constructor call (`Singleton()`) behaves identically for singletons and normal classes:
+1. Property defaults are set
+2. `__init__` is called (if exists)
+
+The only difference is that singletons don't need a variable declaration.
 
 #### When to use `@singleton`
 

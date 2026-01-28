@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Referencia
 
-**Verzió:** 1.0
-**Dátum:** 2026-01-26
+**Verzió:** 1.1
+**Dátum:** 2026-01-28
 
 ## Áttekintés
 
@@ -39,6 +39,20 @@ EasyFlash cartridge támogatás a PyCo-ban:
 
 **8KB mód előnyei:** Csak a ROML cartridge-vezérelt. A memória többi része ($A000-$FFFF) a $01 regiszter kontrollja alatt áll → A Kernal kikapcsolható!
 
+### PyCo Cartridge Üzemmódok
+
+A PyCo kétféle 8KB módot támogat:
+
+| Dekorátor       | Kód helye | Szabad RAM           | Használat                     |
+|-----------------|-----------|----------------------|-------------------------------|
+| `@cartridge(8)` | **ROMH**  | $0000-$9FFF (40KB+!) | **Ajánlott** - maximális RAM  |
+| `@cartridge(-8)`| ROML      | Szétszórva           | Legacy - BASIC kiterjesztések |
+| `@cartridge(16)`| ROML+ROMH | $C000+               | Nagy programok                |
+
+**ROMH mód (mode=8):** A program a ROMH-ból ($A000) fut, így a **$8000-$9FFF is RAM**! Ez 40KB+ összefüggő RAM-ot biztosít ($0000-$9FFF). A Kernal használható marad.
+
+**ROML mód (mode=-8):** A program a ROML-ból ($8000) fut. A $A000-$BFFF szabad RAM. Régebbi viselkedés, BASIC kiterjesztésekhez.
+
 ### Vezérlő Regiszter ($DE02)
 
 | Érték | Bitek     | Jelentés                          |
@@ -53,7 +67,33 @@ EasyFlash cartridge támogatás a PyCo-ban:
 
 ## Memória Térkép
 
-### 8KB Cartridge Mód + Kernal KI
+### ROMH Mód (@cartridge(8)) - Ajánlott!
+
+PLA Mode 6: EXROM=0, GAME=0, LORAM=0, HIRAM=1 ($01=$36)
+
+```
+$0000-$00FF  Zero Page (RAM) - PyCo runtime
+$0100-$01FF  Hardver Stack (RAM)
+$0200-$025F  Bank dispatcher (~60 byte) - FOGLALT!
+$0260-$02FF  Szabad RAM
+$0300-$07FF  Szabad RAM (cassette buffer is)
+$0800+       SSP alapértelmezett kezdőcím
+$8000-$9FFF  **RAM** (8KB) - szabad használatra!
+$A000-$BFFF  ROMH - Program kód (8KB Flash ROM)
+$C000-$CFFF  RAM (4KB)
+$D000-$DFFF  I/O + EasyFlash regiszterek
+  $DE00      Bank regiszter (csak írható, 0-63)
+  $DE02      Vezérlő regiszter (csak írható)
+  $DF00-$DF33  SMC Helper (52 byte)
+  $DF34-$DF3F  EasyFlash modul SRAM változók
+  $DF40-$DF7F  Read trampoline rutin
+  $DF80-$DFFF  EAPI terület (flash programozás)
+$E000-$FFFF  Kernal ROM
+```
+
+**Összesen ~40KB összefüggő RAM ($0000-$9FFF)!** A Kernal is használható.
+
+### ROML Mód (@cartridge(-8))
 
 ```
 $0000-$00FF  Zero Page (RAM) - PyCo runtime
@@ -66,16 +106,10 @@ $8000-$9FFF  ROML - Aktuális bank (8KB Flash ROM)
 $A000-$BFFF  Szabad RAM (8KB) - adatnak használható!
 $C000-$CFFF  Szabad RAM (4KB)
 $D000-$DFFF  I/O + EasyFlash regiszterek
-  $DE00      Bank regiszter (csak írható, 0-63)
-  $DE02      Vezérlő regiszter (csak írható)
-  $DF00-$DF33  SMC Helper (52 byte)
-  $DF34-$DF3F  EasyFlash modul SRAM változók
-  $DF40-$DF7F  Read trampoline rutin
-  $DF80-$DFFF  EAPI terület (flash programozás)
 $E000-$FFFF  Szabad RAM (8KB) - IRQ vektorok itt!
 ```
 
-**Összesen ~50KB szabad RAM!** (vs. ~34KB 16KB módban)
+**Összesen ~50KB szabad RAM!** (de szétszórva)
 
 ### FONTOS: Foglalt Címek
 
@@ -95,21 +129,31 @@ $E000-$FFFF  Szabad RAM (8KB) - IRQ vektorok itt!
 ### Szintaxis
 
 ```python
-@cartridge              # mode=8, stack=0x0800 (alapértelmezett)
-@cartridge()            # ugyanaz
-@cartridge(8)           # mode=8, stack=0x0800
-@cartridge(16)          # mode=16, stack=0x0800
-@cartridge(8, 0x0300)   # mode=8, stack=0x0300
+@cartridge               # mode=8, stack=0x0800 (ROMH mód, ajánlott)
+@cartridge()             # ugyanaz
+@cartridge(8)            # ROMH mód - kód: $A000, RAM: $8000-$9FFF
+@cartridge(-8)           # ROML mód - kód: $8000, RAM: $A000-$BFFF
+@cartridge(16)           # 16KB mód - kód: $8000+$A000
+@cartridge(8, 0x8000)    # ROMH mód, stack a $8000-nál (RAM!)
+@cartridge(-8, 0xA000)   # ROML mód, stack a $A000-nál (RAM!)
 def main():
     pass
 ```
 
 ### Paraméterek
 
-| Paraméter     | Típus | Alapértelmezett | Leírás                    |
-|---------------|-------|-----------------|---------------------------|
-| `mode`        | int   | 8               | 8KB vagy 16KB mód         |
-| `stack_start` | int   | 0x0800          | SSP kezdőcíme             |
+| Paraméter     | Típus | Alapértelmezett | Leírás                               |
+|---------------|-------|-----------------|--------------------------------------|
+| `mode`        | int   | 8               | 8 (ROMH), -8 (ROML), vagy 16 (16KB)  |
+| `stack_start` | int   | 0x0800          | SSP kezdőcíme                        |
+
+### Stack Címtartományok
+
+| Mód | Érvényes stack tartomány | Megjegyzés                          |
+|-----|--------------------------|-------------------------------------|
+| 8   | $0200-$9FFF              | $8000-$9FFF is RAM a ROMH módban!   |
+| -8  | $0200-$7FFF, $A000-$BFFF | $8000 a kód területe                |
+| 16  | $0200-$7FFF              | $8000+ és $A000+ kód területek      |
 
 ### Dekorátor Kompatibilitás
 
@@ -126,6 +170,25 @@ def main():
 ---
 
 ## Indítási Szekvencia
+
+### ROMH Mód (mode=8) - Ajánlott
+
+1. **Reset** → Ultimax mód aktív
+2. CPU olvassa a reset vektort $FFFC/$FFFD-ről (ROMH @ $E000)
+3. Reset vektor → $8000 (ROML stub)
+4. ROML stub: `JMP $FE00` (ROMH boot kód)
+5. **Phase 1** ($FE00, ROMH-ban): Phase 2 másolása RAM-ba ($0800), `JMP $0800`
+6. **Phase 2** ($0800, RAM-ban):
+   - 16KB mód beállítás ($DE02 = $07) - ROMH látható $A000-nél
+   - SMC Helper másolása ROMH → SRAM ($DF00)
+   - Kernal init ($FDA3, $FD50, $FD15, $FF5B)
+   - **Mode 6 beállítás** ($01 = $36) - $8000 RAM lesz, $A000 ROMH marad
+   - `JMP $A000`
+7. **Phase 3** ($A000, ROMH-ban): SSP/FP init, `JMP main`
+
+**Fontos:** A $01 regisztert a Kernal init UTÁN kell beállítani, mert a RAMTAS ($FD50) felülírja!
+
+### ROML Mód (mode=-8)
 
 1. **Reset** → Ultimax mód aktív
 2. CPU olvassa a reset vektort $FFFC/$FFFD-ről (ROMH @ $E000)
@@ -285,7 +348,29 @@ Ez teszi lehetővé:
 
 ## CRT Fájl Formátum
 
-### Struktúra
+### Struktúra - ROMH Mód (mode=8)
+
+```
+Header (64 byte):
+  - "C64 CARTRIDGE   " szignatúra
+  - EasyFlash típus ($0020)
+  - Cartridge név
+
+Bank 0 ROML CHIP (8KB @ $8000):
+  - JMP $FE00 (ROMH boot kódra)
+  - NOP
+  - CBM80 szignatúra
+  - (a többi üres, boot után ez RAM lesz)
+
+Bank 0 ROMH CHIP (8KB @ $A000 módváltás után / $E000 boot alatt):
+  - Phase 3 kód @ $A000 (SSP/FP init + JMP main)
+  - Main program kód
+  - Boot kód @ $BE00 (= $FE00 boot módban)
+  - SMC Helper adat
+  - Reset vektor @ $BFFC → $8000
+```
+
+### Struktúra - ROML Mód (mode=-8)
 
 ```
 Header (64 byte):
@@ -306,7 +391,7 @@ Bank 0 ROMH CHIP (8KB @ $E000):
   - Reset vektor @ $FFFC → $8000
 
 Bank N ROML CHIP-ek (modulonként):
-  - Jump table @ $8000
+  - Jump table @ $8000 (ROML) vagy $A000 (ROMH mód)
   - Modul kód
   - (16KB módban: ROMH @ $A000 is)
 ```

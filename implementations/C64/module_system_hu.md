@@ -102,7 +102,7 @@ load_module(module_name)
 ### Működés
 
 1. **SSP mentés**: Aktuális SSP értéke = module_base (ide fog töltődni a modul)
-2. **SSP növelés ELŐRE** (IRQ-safe!): SSP += code_size + 4 (compile-time ismert méret + header)
+2. **SSP növelés ELŐRE** (IRQ-safe!): SSP += code_size + 4 + singleton_bss_size (compile-time ismert méret)
 3. **IRQ letiltás + ROM engedélyezés**: SEI, majd `$01 = $37` (Kernal ROM be)
 4. **Kernal I/O inicializálás**: CLALL ($FFE7) + CLRCH ($FFCC)
 5. **Fájlnév beállítás**: SETNAM ($FFBD) Pascal stringből
@@ -1085,23 +1085,31 @@ __MOD_counter:
 
 ### BSS Memória Elrendezés Dinamikus Singleton-oknál
 
-Dinamikus importnál (`import module` + `load_module()`) a singleton BSS az **importer BSS-ében** van:
+Dinamikus importnál (`import module` + `load_module()`) a singleton BSS a **modul memóriaterületén belül** van, a kód után:
 
 ```
-__program_end
+module_base (SSP a load előtt):
     │
-    ├── __SI_LocalSingleton (lokális singleton adat)
+    ├── Header: code_size (2 byte) + code_end (2 byte) = 4 byte
     │
-    ├── __mod_screen (2 bájt - modul pointer)
+    ├── Jump table (3 byte/entry)
     │
-    └── __DSI_screen_Screen (singleton példány adat)
+    ├── Modul kód (functions + data)
+    │
+    └── Singleton BSS (automatikusan lefoglalva!)
           │
-          └── __singletons_end = SSP start
+          └── singleton_address = module_base + 4 + code_size + offset
 ```
 
-**Fontos különbség:**
-- Statikus: `__SI_ClassName` a modul BSS-ére mutat (modul része)
-- Dinamikus: `__DSI_module_ClassName` az importer BSS-ében (külön allokálva)
+**Fontos változás (v2026-01):**
+- A dinamikus singleton BSS **NEM** az importer BSS-ében van!
+- A singleton a modul RÉSZÉNEK számít, és vele együtt szabadul fel
+- A `load_module()` automatikusan lefoglalja a singleton BSS méretét is: `SSP += code_size + 4 + singleton_bss_size`
+- Amikor a modul eltávolodik a stack-ről (függvény visszatér), a singleton is automatikusan "megszűnik"
+
+**Fontos különbség (statikus vs dinamikus):**
+- Statikus: `__SI_ClassName` label, fix cím compile-time-ban
+- Dinamikus: runtime számított cím: `__mod_X + code_size + singleton_offset`
 
 ## Globális Tuple Export/Import
 
