@@ -3536,9 +3536,9 @@ len(s) -> byte           # string hossza
 len(arr) -> byte/word    # tömb elemszáma
 ```
 
-**String esetén** O(1) művelet (Pascal-string hossz byte-ja).
+**String esetén** O(1) művelet - egyszerű memória olvasás (Pascal-string hossz byte-ja). Nem függvényhívás, hanem inline kód generálódik, így **nem szükséges változóba menteni** az eredményt többszöri használathoz.
 
-**Tömb esetén** az elemszámot adja vissza. Visszatérési típus:
+**Tömb esetén** az elemszámot adja vissza (fordítási időben ismert konstans). Visszatérési típus:
 - ≤ 256 elem: `byte`
 - > 256 elem: `word`
 

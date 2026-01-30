@@ -3685,9 +3685,9 @@ len(s) -> byte           # string length
 len(arr) -> byte/word    # array element count
 ```
 
-**For string** O(1) operation (Pascal-string length byte).
+**For string** O(1) operation - a simple memory read (Pascal-string length byte). No function call overhead, generates inline code, so **no need to cache the result** in a variable for repeated use.
 
-**For array** returns element count. Return type:
+**For array** returns element count (compile-time constant). Return type:
 - ≤ 256 elements: `byte`
 - > 256 elements: `word`
 
