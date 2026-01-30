@@ -277,6 +277,46 @@ Benefits of dynamic import:
 
 > **Note:** Dynamic import is a platform-specific feature. It may not be available or practical on all platforms - for example, on microcontrollers without storage (disk, SD card), dynamic loading is not possible. In such cases, only static import can be used.
 
+#### Selective Class Import
+
+When importing classes, you can specify which methods you actually use. This enables Dead Code Elimination (DCE) - only the specified methods (and their dependencies) will be included in the compiled program.
+
+**Syntax:**
+
+```python
+from module.ClassName import method1, method2, ...
+```
+
+**Example:**
+
+```python
+# Import only the methods we actually use
+from text.Text import print_at, clear
+
+def main():
+    t: Text
+    t.print_at(0, 0, "Hello")  # ✓ Works - method was imported
+    t.clear()                   # ✓ Works - method was imported
+    t.fill(0)                   # ✗ ERROR - method was NOT imported!
+```
+
+**Comparison:**
+
+| Import Style                          | What's Included         |
+| ------------------------------------- | ----------------------- |
+| `from text import Text`               | ALL methods (~11KB)     |
+| `from text.Text import print_at`      | Only print_at (~500B)   |
+| `from text.Text import print_at, clear` | Both methods (~700B)  |
+
+**Key points:**
+
+- The class is still declared normally: `t: Text`
+- Constructor (`__init__`) and defaults (`__defaults__`) are automatically included
+- Dependencies are automatically included (if `print_at` calls `put`, `put` is included)
+- Attempting to call a non-imported method is a compile-time error
+
+> **Note:** This feature is particularly valuable on memory-constrained platforms where every byte counts.
+
 #### Alias (`as`) Support
 
 Used for name collisions or shortening:
@@ -3575,7 +3615,45 @@ def example():
 Convert value to string.
 
 ```python
-str(value) -> string
+str(value) -> alias[string]
+str(value, decimals) -> alias[string]
+```
+
+**For primitive types:**
+
+| Type    | Example                         | Result       |
+| ------- | ------------------------------- | ------------ |
+| byte    | `str(123)`                      | "123"        |
+| byte    | `str(123, 2)`                   | "123.00"     |
+| sbyte   | `str(sbyte(-42))`               | "-42"        |
+| word    | `str(word(12345))`              | "12345"      |
+| int     | `str(int(-32768))`              | "-32768"     |
+| int     | `str(int(-42), 3)`              | "-42.000"    |
+| bool    | `str(True)`                     | "True"       |
+| f16     | `str(f16(3.14))`                | "3.14"       |
+| f16     | `str(f16(3.14159), 1)`          | "3.1"        |
+| f32     | `str(f32(123.456))`             | "123.456"    |
+| f32     | `str(f32(123.456), 2)`          | "123.45"     |
+| float   | `str(3.14159)`                  | "3.14159"    |
+| float   | `str(3.14159, 2)`               | "3.14"       |
+
+The optional `decimals` parameter (0-7, clamped):
+- **Integer types:** Adds `.00...` suffix (e.g., `str(123, 2)` → "123.00")
+- **Float types:** Truncates or pads decimal places
+
+> **Note:** Returns `alias[string]` - the result is valid only until end of statement. Copy immediately to your own variable if needed later.
+
+```python
+def format_score():
+    score: int = 1234
+    lives: byte = 3
+
+    # Direct use in print (safe - used immediately)
+    print("Score: ", str(score), " Lives: ", str(lives))
+
+    # Copy to variable for later use
+    s: string[20]
+    s = str(score, 2)    # "1234.00" - copied immediately
 ```
 
 **For objects:** If there's a `__str__` method, it calls that. If not, returns `<ClassName>` format.

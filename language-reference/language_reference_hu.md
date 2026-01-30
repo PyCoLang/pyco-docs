@@ -277,6 +277,46 @@ A dinamikus import előnyei:
 
 > **Megjegyzés:** A dinamikus import platform-specifikus feature. Nem minden platformon érhető el vagy van értelme - például mikrovezérlőknél, ahol nincs háttértár (lemez, SD kártya), a dinamikus betöltés nem lehetséges. Ilyen esetben csak a statikus import használható.
 
+#### Szelektív osztály import
+
+Osztályok importálásakor megadhatod, hogy mely metódusokat használod ténylegesen. Ez lehetővé teszi a Dead Code Elimination-t (DCE) - csak a megadott metódusok (és függőségeik) kerülnek a lefordított programba.
+
+**Szintaxis:**
+
+```python
+from modul.OsztályNév import metódus1, metódus2, ...
+```
+
+**Példa:**
+
+```python
+# Csak a ténylegesen használt metódusok importálása
+from text.Text import print_at, clear
+
+def main():
+    t: Text
+    t.print_at(0, 0, "Hello")  # ✓ Működik - a metódus importálva volt
+    t.clear()                   # ✓ Működik - a metódus importálva volt
+    t.fill(0)                   # ✗ HIBA - a metódus NEM volt importálva!
+```
+
+**Összehasonlítás:**
+
+| Import stílus                           | Mi kerül be          |
+| --------------------------------------- | -------------------- |
+| `from text import Text`                 | MINDEN metódus (~11KB) |
+| `from text.Text import print_at`        | Csak print_at (~500B)  |
+| `from text.Text import print_at, clear` | Mindkét metódus (~700B) |
+
+**Fontos tudnivalók:**
+
+- Az osztályt a szokásos módon kell deklarálni: `t: Text`
+- A konstruktor (`__init__`) és alapértékek (`__defaults__`) automatikusan bekerülnek
+- A függőségek automatikusan bekerülnek (ha `print_at` hívja `put`-ot, `put` is benne lesz)
+- Nem importált metódus hívása fordítási hiba
+
+> **Megjegyzés:** Ez a feature különösen értékes memória-korlátozott platformokon, ahol minden byte számít.
+
 #### Alias (`as`) támogatás
 
 Névütközés esetén vagy rövidítéshez használható:
@@ -3426,7 +3466,45 @@ def example():
 Érték stringgé alakítása.
 
 ```python
-str(érték) -> string
+str(érték) -> alias[string]
+str(érték, tizedesjegyek) -> alias[string]
+```
+
+**Primitív típusok esetén:**
+
+| Típus   | Példa                           | Eredmény     |
+| ------- | ------------------------------- | ------------ |
+| byte    | `str(123)`                      | "123"        |
+| byte    | `str(123, 2)`                   | "123.00"     |
+| sbyte   | `str(sbyte(-42))`               | "-42"        |
+| word    | `str(word(12345))`              | "12345"      |
+| int     | `str(int(-32768))`              | "-32768"     |
+| int     | `str(int(-42), 3)`              | "-42.000"    |
+| bool    | `str(True)`                     | "True"       |
+| f16     | `str(f16(3.14))`                | "3.14"       |
+| f16     | `str(f16(3.14159), 1)`          | "3.1"        |
+| f32     | `str(f32(123.456))`             | "123.456"    |
+| f32     | `str(f32(123.456), 2)`          | "123.45"     |
+| float   | `str(3.14159)`                  | "3.14159"    |
+| float   | `str(3.14159, 2)`               | "3.14"       |
+
+Az opcionális `tizedesjegyek` paraméter (0-7, levágva):
+- **Egész típusoknál:** `.00...` utótagot ad hozzá (pl. `str(123, 2)` → "123.00")
+- **Lebegőpontos típusoknál:** Levágja vagy kiegészíti a tizedesjegyeket
+
+> **Megjegyzés:** `alias[string]`-et ad vissza - az eredmény csak az utasítás végéig érvényes. Azonnal másold át saját változóba, ha később is szükséged van rá.
+
+```python
+def format_score():
+    score: int = 1234
+    lives: byte = 3
+
+    # Közvetlen használat print-ben (biztonságos - azonnal használjuk)
+    print("Score: ", str(score), " Lives: ", str(lives))
+
+    # Másolás változóba későbbi használathoz
+    s: string[20]
+    s = str(score, 2)    # "1234.00" - azonnal átmásolva
 ```
 
 **Objektumok esetén:** Ha van `__str__` metódus, azt hívja meg. Ha nincs, `<ClassName>` formátumot ad vissza.

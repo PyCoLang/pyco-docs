@@ -783,13 +783,19 @@ ellenőrzi a fájl érvényességét, futásidőben nincs overhead.
 
 A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tudja olvasni.
 
+**PMI Verzió történet:**
+- **v1**: Eredeti formátum
+- **v2**: Flags byte hozzáadva a függvényekhez/metódusokhoz
+- **v3**: code_size hozzáadva a header-hez
+- **v4**: DCE info (offset, size, dependencies) szelektív beágyazáshoz
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ .PMI FÁJL - Csak a fordító olvassa!                         │
 ├─────────────────────────────────────────────────────────────┤
 │ HEADER                                                      │
 │   magic (3 byte): "PMI"                                     │
-│   version (1 byte): 1                                       │
+│   version (1 byte): 4                                       │
 │   module_name_len (1 byte)                                  │
 │   module_name (N byte)                                      │
 │   export_count (1 byte)                                     │
@@ -807,6 +813,11 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 │   param_types (N byte, kódolt típusok)                      │
 │   return_type (1 byte, kódolt típus)                        │
 │   flags (1 byte): bit0=is_naked, bit1=is_irq_helper         │
+│   DCE_INFO (v4+):                                           │
+│     offset (2 byte, LE): kezdő pozíció a PM binárisban      │
+│     size (2 byte, LE): függvény mérete byte-ban             │
+│     dep_count (1 byte): függőségek száma                    │
+│     dependencies (N byte): hívott függvények jump_index-ei  │
 ├─────────────────────────────────────────────────────────────┤
 │ CLASS ENTRY (ha export_type = 1)                            │
 │   instance_size (2 byte, word)                              │
@@ -828,6 +839,7 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 │     param_types (N byte)                                    │
 │     return_type (1 byte)                                    │
 │     flags (1 byte): bit0=is_naked, bit1=is_irq_helper       │
+│     DCE_INFO (v4+): azonos mint a function entry-nél        │
 ├─────────────────────────────────────────────────────────────┤
 │ SINGLETON ENTRY (ha export_type = 2)                        │
 │   (Azonos struktúra mint CLASS ENTRY)                       │
@@ -837,6 +849,41 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 │   element_count (2 byte, little-endian)                     │
 │   offset (2 byte, little-endian) - offset a modul elejétől  │
 └─────────────────────────────────────────────────────────────┘
+```
+
+#### DCE (Dead Code Elimination) Támogatás
+
+A PMI v4 tartalmazza az offset, size és dependency információkat minden függvényhez és metódushoz. Ez lehetővé teszi a **szelektív osztály importot**:
+
+```python
+# Teljes import - MINDEN metódus beágyazva (~11KB)
+from text import Text
+
+# Szelektív import - CSAK a megadott metódusok beágyazva (~500B)
+from text.Text import print_at
+```
+
+**Hogyan működik:**
+1. A fordító beolvassa a PMI-t és megkapja a DCE infót minden metódushoz
+2. Szelektív import esetén meghatározza, mely metódusok kellenek:
+   - Explicit importált metódusok
+   - `__defaults__` és `__init__` (mindig kellenek a konstruktorhoz)
+   - Tranzitív függőségek (ha A metódus hívja B-t, B is benne lesz)
+3. Csak a szükséges kód chunk-ok kerülnek a végleges programba
+
+**Példa DCE info a PMI-ben:**
+```
+Method: print_at
+  jump_index: 17
+  offset: 4219      ; a PM bináris 4219. byte-jánál kezdődik
+  size: 387         ; 387 byte kód
+  dependencies: []  ; nem hív más modul függvényt
+
+Method: print_int_at
+  jump_index: 20
+  offset: 5656
+  size: 129
+  dependencies: [19] ; hívja print_word_at-ot (jump_index 19)
 ```
 
 ### Típuskódolás a .PMI-ben
@@ -938,7 +985,7 @@ Eredmény:
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Fordító látja: from math import sin                      │
 │                          ↓                                  │
-│ 2. Megnyitja: math.pm                                    │
+│ 2. Megnyitja: math.pm                                       │
 │    - Olvassa az Info Section-t (metaadatok)                 │
 │    - Ellenőrzi: van 'sin' szimbólum? ✓                      │
 │    - Ellenőrzi: publikus? ✓ (nincs _ prefix)                │
@@ -958,14 +1005,14 @@ Eredmény:
 ┌─────────────────────────────────────────────────────────────┐
 │ 1. Fordító látja: import math                               │
 │                          ↓                                  │
-│ 2. Megnyitja: math.pm                                    │
+│ 2. Megnyitja: math.pm                                       │
 │    - Olvassa az Info Section-t (metaadatok, aláírások)      │
 │    - BSS-ben helyet foglal: __mod_math: .word 0             │
 │    - Megjegyzi entry offset-eket (sin = 0, cos = 3, ...)    │
 │    - Kód NEM fordul be!                                     │
 │                          ↓                                  │
 │ 3. Runtime: load_module(math) hívás                         │
-│    - OPEN 8,8,8,"MATH.PM,S,R"                            │
+│    - OPEN 8,8,8,"MATH.PM,S,R"                               │
 │    - READ 2 byte → code_size                                │
 │    - READ code_size byte → SSP-re (stack teteje)            │
 │    - Relokáció (marker-byte scan)                           │

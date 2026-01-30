@@ -837,13 +837,19 @@ validates the file at compile-time, no runtime overhead.
 
 The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 
+**PMI Version History:**
+- **v1**: Original format
+- **v2**: Added flags byte to functions/methods
+- **v3**: Added code_size to header
+- **v4**: Added DCE info (offset, size, dependencies) for selective embedding
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │ .PMI FILE - Only the compiler reads this!                   │
 ├─────────────────────────────────────────────────────────────┤
 │ HEADER                                                      │
 │   magic (3 bytes): "PMI"                                    │
-│   version (1 byte): 1                                       │
+│   version (1 byte): 4                                       │
 │   module_name_len (1 byte)                                  │
 │   module_name (N bytes)                                     │
 │   export_count (1 byte)                                     │
@@ -861,6 +867,11 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 │   param_types (N bytes, encoded types)                      │
 │   return_type (1 byte, encoded type)                        │
 │   flags (1 byte): bit0=is_naked, bit1=is_irq_helper         │
+│   DCE_INFO (v4+):                                           │
+│     offset (2 bytes, LE): start position in PM binary       │
+│     size (2 bytes, LE): function size in bytes              │
+│     dep_count (1 byte): number of dependencies              │
+│     dependencies (N bytes): jump_indices of called functions│
 ├─────────────────────────────────────────────────────────────┤
 │ CLASS ENTRY (if export_type = 1)                            │
 │   instance_size (2 bytes, word)                             │
@@ -882,6 +893,7 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 │     param_types (N bytes)                                   │
 │     return_type (1 byte)                                    │
 │     flags (1 byte): bit0=is_naked, bit1=is_irq_helper       │
+│     DCE_INFO (v4+): same as function entry                  │
 ├─────────────────────────────────────────────────────────────┤
 │ SINGLETON ENTRY (if export_type = 2)                        │
 │   (Same structure as CLASS ENTRY)                           │
@@ -891,6 +903,41 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 │   element_count (2 bytes, little-endian)                    │
 │   offset (2 bytes, little-endian) - offset from module start│
 └─────────────────────────────────────────────────────────────┘
+```
+
+#### DCE (Dead Code Elimination) Support
+
+PMI v4 includes offset, size, and dependency information for each function and method. This enables **selective class import**:
+
+```python
+# Full import - ALL methods embedded (~11KB)
+from text import Text
+
+# Selective import - ONLY specified methods embedded (~500B)
+from text.Text import print_at
+```
+
+**How it works:**
+1. Compiler reads PMI to get DCE info for each method
+2. For selective imports, determines which methods are needed:
+   - Explicitly imported methods
+   - `__defaults__` and `__init__` (always needed for constructors)
+   - Transitive dependencies (if method A calls method B, B is included)
+3. Only the required code chunks are embedded in the final program
+
+**Example DCE info in PMI:**
+```
+Method: print_at
+  jump_index: 17
+  offset: 4219      ; starts at byte 4219 in PM binary
+  size: 387         ; 387 bytes of code
+  dependencies: []  ; doesn't call other module functions
+
+Method: print_int_at
+  jump_index: 20
+  offset: 5656
+  size: 129
+  dependencies: [19] ; calls print_word_at (jump_index 19)
 ```
 
 ### Type Encoding in .PMI

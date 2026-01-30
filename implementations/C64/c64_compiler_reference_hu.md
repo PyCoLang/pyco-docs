@@ -168,32 +168,34 @@ A Kernal-mentes mód ugyanazokat a címeket használja, így a kilépés zökken
 
 > **Megjegyzés:** A $FB-$FE terület a Commodore Programmer's Reference Guide-ban is "Free for user programs" jelöléssel szerepel. Ez a 4 byte különösen hasznos memory-mapped változóknak vagy gyors ZP pointereknek.
 
-### 2.3 Software Stack
+### 2.3 Stack architektúra
 
-A C64-en a PyCo két stack-et használ:
+A C64-en a PyCo két stack-et használ, külön célokra:
 
-- **Hardware stack** ($0100-$01FF): 6502 beépített verme - visszatérési címek
-- **Software stack**: Paraméterek és lokális változók
+- **Hardware stack** ($0100-$01FF): Paraméterek + visszatérési címek
+- **Software stack** (SSP): Lokális változók
 
 ```
-Software stack:                      Hardware stack ($0100-$01FF):
+Hardware stack ($0100-$01FF):        Software stack (SSP):
 
+        ↑ SP (6502)                         ↑ SSP
 ┌─────────────────────────┐          ┌─────────────────────────┐
-│                         │          │                         │
-│    Lokális változók     │          │    Visszatérési cím     │
-│    (a deklaráció        │          │    (2 byte, JSR teszi)  │
-│     sorrendjében)       │          │                         │
-│                         │          └─────────────────────────┘
+│    Paraméter 0 (lo)     │ SP+5     │                         │
+│    Paraméter 0 (hi)     │ SP+6     │    Lokális változók     │
+│    Paraméter 1          │ SP+7     │    (a deklaráció        │
+│    ...                  │          │     sorrendjében)       │
+├─────────────────────────┤          │                         │
+│    Visszatérési cím lo  │ SP+3     └─────────────────────────┘ ← FP
+│    Visszatérési cím hi  │ SP+4
 ├─────────────────────────┤
-│                         │
-│    Paraméterek          │
-│                         │
-└─────────────────────────┘ ← FP (Frame Pointer)
-                          ↑
-                    SSP (stack teteje)
+│    Mentett FP (lo)      │ SP+1
+│    Mentett FP (hi)      │ SP+2
+└─────────────────────────┘ ← SP
 ```
 
-A **Frame Pointer (FP)** egy fix pont, amihez képest a fordító eléri a változókat. Az FP-t a hívó függvény újraszámolja minden hívás után (`FP = SSP - frame_size`).
+#### Frame Pointer (FP)
+
+A **Frame Pointer (FP)** a lokális változók bázisa a software stack-en. A hívott függvény beállítja: `FP = SSP`, majd `SSP += locals_size`.
 
 ---
 
@@ -212,14 +214,48 @@ A generált assembly-ben a PyCo nevek prefixet kapnak:
 
 ### 3.2 Hívási konvenció
 
-**Paraméter átadás:**
+#### Standard calling convention (HW stack)
 
-1. Paraméterek a software stack-re kerülnek (jobbról balra)
-2. `JSR` a függvénybe
-3. A hívott függvény beállítja FP-t
-4. Visszatérési érték `retval`-ban ($0F-$12)
+A PyCo a **hardware stack-et** használja paraméter átadásra, ami ~3x gyorsabb a software stack-nél.
 
-**Register-based ABI (csak `@naked` és `@mapped`):**
+**Caller oldal:**
+```asm
+; foo(a, b) hívása - a=5, b=10
+lda #10
+pha              ; b paraméter → HW stack
+lda #5
+pha              ; a paraméter → HW stack
+jsr __F_foo
+pla              ; caller cleanup
+pla
+```
+
+**Callee oldal:**
+```asm
+__F_foo:
+    ; Paraméterek elérése TSX + indexed címzéssel
+    tsx
+    lda $0103,x      ; a paraméter (SP+3)
+    sta tmp0
+    lda $0104,x      ; b paraméter (SP+4)
+    ; ...
+    rts
+```
+
+**Stack layout a callee-ben:**
+```
+SP+1: mentett FP (lo)
+SP+2: mentett FP (hi)
+SP+3: visszatérési cím (lo)
+SP+4: visszatérési cím (hi)
+SP+5: első paraméter (offset 0)
+SP+6: második paraméter (offset 1)
+...
+```
+
+**Visszatérési érték:** `retval` ($0F-$12, max 4 byte)
+
+#### Register-based ABI (csak `@naked` és `@mapped`)
 
 | Paraméterek          | Regiszterek    |
 | -------------------- | -------------- |

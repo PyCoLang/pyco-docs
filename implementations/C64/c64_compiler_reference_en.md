@@ -168,32 +168,34 @@ Kernal-free mode uses the same addresses for seamless exit:
 
 > **Note:** The $FB-$FE area is marked as "Free for user programs" in the Commodore Programmer's Reference Guide. These 4 bytes are particularly useful for memory-mapped variables or fast ZP pointers.
 
-### 2.3 Software Stack
+### 2.3 Stack Architecture
 
-On the C64, PyCo uses two stacks:
+On the C64, PyCo uses two stacks for different purposes:
 
-- **Hardware stack** ($0100-$01FF): 6502 built-in stack - return addresses
-- **Software stack**: Parameters and local variables
+- **Hardware stack** ($0100-$01FF): Parameters + return addresses
+- **Software stack** (SSP): Local variables
 
 ```
-Software stack:                      Hardware stack ($0100-$01FF):
+Hardware stack ($0100-$01FF):        Software stack (SSP):
 
+        ↑ SP (6502)                         ↑ SSP
 ┌─────────────────────────┐          ┌─────────────────────────┐
-│                         │          │                         │
-│    Local variables      │          │    Return address       │
-│    (in declaration      │          │    (2 bytes, JSR puts)  │
-│     order)              │          │                         │
-│                         │          └─────────────────────────┘
+│    Parameter 0 (lo)     │ SP+5     │                         │
+│    Parameter 0 (hi)     │ SP+6     │    Local variables      │
+│    Parameter 1          │ SP+7     │    (in declaration      │
+│    ...                  │          │     order)              │
+├─────────────────────────┤          │                         │
+│    Return address lo    │ SP+3     └─────────────────────────┘ ← FP
+│    Return address hi    │ SP+4
 ├─────────────────────────┤
-│                         │
-│    Parameters           │
-│                         │
-└─────────────────────────┘ ← FP (Frame Pointer)
-                          ↑
-                    SSP (stack top)
+│    Saved FP (lo)        │ SP+1
+│    Saved FP (hi)        │ SP+2
+└─────────────────────────┘ ← SP
 ```
 
-The **Frame Pointer (FP)** is a fixed point from which the compiler accesses variables. The FP is recalculated by the caller after each call (`FP = SSP - frame_size`).
+#### Frame Pointer (FP)
+
+The **Frame Pointer (FP)** is the base address for local variables on the software stack. The callee sets it up: `FP = SSP`, then `SSP += locals_size`.
 
 ---
 
@@ -212,14 +214,48 @@ In the generated assembly, PyCo names receive prefixes:
 
 ### 3.2 Calling Convention
 
-**Parameter passing:**
+#### Standard Calling Convention (HW Stack)
 
-1. Parameters pushed to software stack (right to left)
-2. `JSR` to function
-3. Called function sets up FP
-4. Return value in `retval` ($0F-$12)
+PyCo uses the **hardware stack** for parameter passing, which is ~3x faster than the software stack.
 
-**Register-based ABI (`@naked` and `@mapped` only):**
+**Caller side:**
+```asm
+; foo(a, b) call - a=5, b=10
+lda #10
+pha              ; b parameter → HW stack
+lda #5
+pha              ; a parameter → HW stack
+jsr __F_foo
+pla              ; caller cleanup
+pla
+```
+
+**Callee side:**
+```asm
+__F_foo:
+    ; Access parameters via TSX + indexed addressing
+    tsx
+    lda $0103,x      ; a parameter (SP+3)
+    sta tmp0
+    lda $0104,x      ; b parameter (SP+4)
+    ; ...
+    rts
+```
+
+**Stack layout in callee:**
+```
+SP+1: saved FP (lo)
+SP+2: saved FP (hi)
+SP+3: return address (lo)
+SP+4: return address (hi)
+SP+5: first parameter (offset 0)
+SP+6: second parameter (offset 1)
+...
+```
+
+**Return value:** `retval` ($0F-$12, max 4 bytes)
+
+#### Register-based ABI (`@naked` and `@mapped` only)
 
 | Parameters           | Registers      |
 | -------------------- | -------------- |

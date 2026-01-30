@@ -252,7 +252,7 @@ def main():
 | `print(a, b, ...)`     | Output (no auto newline/space!)                           |
 | `printsep(sep, ...)`   | Output with separator                                     |
 | `sprint(buf, ...)`     | Write to string buffer                                    |
-| `str(value)`           | Convert to string                                         |
+| `str(value[, decimals])` | Convert to string (primitives + objects)                |
 | `len(s)`               | String/array/tuple length                                 |
 | `size(x)`              | Memory size in bytes                                      |
 | `getkey()`             | Non-blocking key read (0 if none)                         |
