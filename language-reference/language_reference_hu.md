@@ -2336,6 +2336,102 @@ def main():
 
 **Összetett típusok referencia szerint** adódnak át - lásd [Alias paraméterként](#56-alias-paraméterként).
 
+### 8.2.1 Default paraméter értékek
+
+A PyCo támogatja a default paraméter értékeket - a Python szintaxissal kompatibilis módon:
+
+```python
+def greet(times: byte = 3):
+    i: byte
+    for i in range(0, times):
+        print("Hello!\n")
+
+def add(a: int, b: int = 10) -> int:
+    return a + b
+
+def main():
+    greet()           # times = 3 (default)
+    greet(5)          # times = 5
+
+    x: int = add(5)   # 5 + 10 = 15
+    y: int = add(5, 20)  # 5 + 20 = 25
+```
+
+#### Szabályok
+
+| Szabály                      | Leírás                                                                   |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| Végén legyenek               | Default értékű paraméterek csak a paraméter lista **végén** lehetnek     |
+| Csak konstans                | Default érték csak literál vagy NAGYBETŰS konstans (fordítási időben kell ismert legyen) |
+| Pozícionális                 | Nincs keyword argument - csak pozícionális argumentumok                  |
+| Hívó oldali behelyettesítés  | A fordító a **hívó oldalon** helyettesíti be a default értékeket          |
+
+#### Támogatott típusok és default értékek
+
+| Paraméter típus              | Megengedett default                                         |
+| ---------------------------- | ----------------------------------------------------------- |
+| `byte`, `sbyte`, `word`, `int` | Literál (`10`, `0xFF`) vagy konstans (`MY_CONST`)         |
+| `bool`                       | `True`, `False`, vagy konstans                              |
+| `char`                       | Char literál (`'x'`) vagy konstans                          |
+| `f16`, `f32`, `float`        | Float literál (`3.14`) vagy konstans                        |
+| `tuple[T]`                   | Globális tuple neve                                         |
+| `alias[T]`                   | `alias(CÍM)` forma literál vagy konstans címmel             |
+
+**Példa konstans kifejezéssel:**
+
+```python
+BASE = 0x0400
+OFFSET = 40
+
+def set_pos(addr: word = BASE + OFFSET):  # konstans kifejezés OK
+    # ...
+    pass
+```
+
+#### Default értékek metódusokban
+
+A default értékek metódusokban is működnek, beleértve a `__init__`-et is:
+
+```python
+class Player:
+    x: int = 0
+    y: int = 0
+    health: byte = 100
+
+    def __init__(start_x: int = 160, start_y: int = 100):
+        self.x = start_x
+        self.y = start_y
+
+    def move(dx: int = 1, dy: int = 0):
+        self.x = self.x + dx
+        self.y = self.y + dy
+
+def main():
+    p: Player
+    p()                    # x=160, y=100 (mindkét default)
+    p.move()               # x+1, y+0 (mindkét default)
+    p.move(5)              # x+5, y+0 (dy default)
+    p.move(5, 3)           # x+5, y+3 (nincs default)
+```
+
+#### Tuple és alias default
+
+```python
+default_colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
+
+def draw(colors: tuple[byte] = default_colors):
+    # ...
+    pass
+
+SCREEN = 0x0400
+
+def print_at(screen: alias[byte] = alias(SCREEN)):
+    # ...
+    pass
+```
+
+> **Megjegyzés:** A default értékek fordítási időben helyettesítődnek be a hívó oldalon. Ez azt jelenti, hogy ha egy könyvtár függvényt default paraméterrel exportálsz, a default érték a könyvtár PMI fájljába kerül, és a hívó kód fordításakor onnan helyettesítődik be.
+
 ### 8.3 A main() belépési pont
 
 Minden PyCo programnak **kötelezően** tartalmaznia kell egy `main()` függvényt. Ez a program belépési pontja - a végrehajtás itt kezdődik. A `main()` függvény nélkül a fordító hibát jelez.
@@ -2643,6 +2739,51 @@ class Enemy:
 2. Az `__init__` metódus lefut (ha létezik és ha van argumentum)
 
 **Fontos:** Az inicializáló hívás (`pos()`) **NEM kifejezés** - nem szerepelhet értékadás jobb oldalán vagy függvényargumentumként. Ez egy utasítás, ami egy már deklarált objektumon művel.
+
+### 9.3.1 Dinamikus memória allokáció (__new__)
+
+A `__new__` metódus **speciális konstruktor**, amely lehetővé teszi dinamikus memória allokációt az objektum létrehozásakor. A lényeges különbség az `__init__`-hez képest:
+
+- **`__new__`** a **hívó** stack frame-jén fut (az allokációk megmaradnak a függvény visszatérése után)
+- **`__init__`** saját stack frame-et kap (az allokációk felszabadulnak visszatéréskor)
+
+Ez azt jelenti, hogy a `__new__`-ban az `alloc()` függvénnyel lefoglalt memória a hívó függvény (pl. `main()`) frame-jéhez tartozik, és mindaddig érvényes marad, amíg az a függvény fut.
+
+**Konstruktor hívási sorrend `obj()` hívásakor:**
+1. **Alapértékek beállítása** (tulajdonságok alapértelmezett értékei)
+2. **`__new__` futtatása** (ha létezik) - dinamikus allokáció itt történik
+3. **`__init__` futtatása** (ha létezik) - felhasználói inicializáció
+
+```python
+class DynamicBuffer:
+    data: alias[array[byte, 256]]   # Pointer a dinamikus memóriára
+    size: byte = 0
+
+    def __new__(sz: byte):
+        # Az alloc() a hívó frame-jén foglal memóriát
+        alloc(self.data, sz)
+
+    def __init__(sz: byte):
+        # A __new__ után fut - self.data már érvényes pointer
+        self.size = sz
+        memfill(self.data, 0)       # Nullázás
+
+def main():
+    buf: DynamicBuffer
+    buf(64)                         # 64 byte allokálva main() frame-jén
+    buf.data[0] = 42                # Működik!
+    # A memória addig érvényes, amíg main() fut
+```
+
+**Fontos szabályok:**
+- A `__new__` és `__init__` paramétereinek **azonosnak** kell lenniük
+- A `__new__`-nak **nem lehet visszatérési értéke**
+- A `__new__`-ban használj `alloc()`-ot a dinamikus memória foglaláshoz
+
+**Mikor használd a `__new__`-t?**
+- Változó méretű objektumokhoz (pl. dinamikus tömbök)
+- Amikor a memória mérete csak futásidőben derül ki
+- Amikor az objektumnak nagy, dinamikusan allokált bufferre van szüksége
 
 ### 9.4 Metódusok
 
@@ -3725,6 +3866,81 @@ class Display:
 
 ---
 
+### alloc
+
+Dinamikus memória allokáció a software stack-en. Az `alloc()` lefoglal egy megadott méretű memóriaterületet, és a címét egy alias változóba menti.
+
+**Szintaxis:**
+
+```python
+alloc(alias_változó, méret)
+```
+
+**Paraméterek:**
+
+| Paraméter        | Típus       | Leírás                                           |
+| ---------------- | ----------- | ------------------------------------------------ |
+| `alias_változó`  | alias       | Az alias változó, ami a lefoglalt címet kapja    |
+| `méret`          | byte/word   | Lefoglalandó byte-ok száma                       |
+
+**Működés:**
+- A memória a **software stack-en (SSP)** foglalódik
+- Az SSP növelődik a megadott mérettel
+- Az allokáció báziscíme az alias változóba kerül
+- A memória addig érvényes, amíg a tartalmazó függvény fut
+
+**Memória élettartam:**
+
+| Kontextus         | Élettartam                                              |
+| ----------------- | ------------------------------------------------------- |
+| Normál függvény   | A függvény visszatéréséig (automatikusan felszabadul)   |
+| `__new__` metódus | A **hívó** függvény visszatéréséig (megmarad!)          |
+
+**Példa - lokális buffer:**
+
+```python
+def process_data():
+    temp: alias[array[byte, 256]]
+    alloc(temp, 100)            # 100 byte ideiglenes buffer
+    # ... használat ...
+    # Automatikusan felszabadul, amikor process_data() visszatér
+```
+
+**Példa - dinamikus objektum (`__new__`-val):**
+
+```python
+class Frame:
+    char_buf: alias[array[byte, 2000]]
+    color_buf: alias[array[byte, 2000]]
+    width: byte
+    height: byte
+
+    def __new__(w: byte, h: byte):
+        size: word
+        size = word(w) * word(h)
+        alloc(self.char_buf, size)     # Karakter buffer
+        alloc(self.color_buf, size)    # Szín buffer
+
+    def __init__(w: byte, h: byte):
+        self.width = w
+        self.height = h
+        memfill(self.char_buf, 32)     # Szóközökkel tölt
+        memfill(self.color_buf, 1)     # Fehér szín
+
+def main():
+    f: Frame
+    f(40, 10)                          # 400 + 400 = 800 byte allokálva
+    f.char_buf[0] = 65                 # 'A' az első pozícióba
+    # A bufferek addig érvényesek, amíg main() fut
+```
+
+**Fontos megjegyzések:**
+- Az `alloc()` **nem nullázza** a lefoglalt memóriát - használj `memfill()`-t ha szükséges
+- A **maximális allokálható méret** a rendelkezésre álló stack mérettől függ
+- Rekurzív hívásokban óvatosan használd - minden hívás növeli a stack-et
+
+---
+
 ## 13. Speciális funkciók
 
 ### 13.1 Inline assembly (__asm__)
@@ -3839,11 +4055,11 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 
 #### Függvények
 
-| Python          | PyCo                      | Megjegyzés                      |
-| --------------- | ------------------------- | ------------------------------- |
-| `def f(*args):` | ❌ Nincs variadic          | Fix paraméterszám               |
-| `def f(x=10):`  | ❌ Nincs default érték     | Minden paramétert meg kell adni |
-| `f(name="x")`   | ❌ Nincs keyword arg       | Csak pozícionális               |
+| Python          | PyCo                      | Megjegyzés                               |
+| --------------- | ------------------------- | ---------------------------------------- |
+| `def f(*args):` | ❌ Nincs variadic          | Fix paraméterszám                        |
+| `def f(x=10):`  | `def f(x: byte = 10):`    | ✅ Default értékek támogatottak           |
+| `f(name="x")`   | ❌ Nincs keyword arg       | Csak pozícionális                        |
 | `return obj`    | `return obj` → `alias[T]` | Összetett típus csak alias-ként |
 | `lambda x: x+1` | ❌ Nincs lambda            | Csak `def`                      |
 
@@ -3888,8 +4104,10 @@ class Enemy:                      class Enemy:
         self.hp = hp                  def __init__(hp_val: int):
                                           self.hp = hp_val
 
-def greet(name="World"):          def greet(name: alias[string]):
-    print(f"Hello {name}!")           print("Hello ", name, "!\n")
+def greet(name="World"):          def greet(times: byte = 1):
+    print(f"Hello {name}!")           i: byte
+                                      for i in range(0, times):
+                                          print("Hello!\n")
 
 def main():                       def main():
     x = 10                            x: int = 10

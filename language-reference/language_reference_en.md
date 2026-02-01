@@ -2396,6 +2396,102 @@ def main():
 
 **Composite types are passed by reference** - see [Alias as Parameter](#55-alias-as-parameter).
 
+### 8.2.1 Default Parameter Values
+
+PyCo supports default parameter values - compatible with Python syntax:
+
+```python
+def greet(times: byte = 3):
+    i: byte
+    for i in range(0, times):
+        print("Hello!\n")
+
+def add(a: int, b: int = 10) -> int:
+    return a + b
+
+def main():
+    greet()           # times = 3 (default)
+    greet(5)          # times = 5
+
+    x: int = add(5)   # 5 + 10 = 15
+    y: int = add(5, 20)  # 5 + 20 = 25
+```
+
+#### Rules
+
+| Rule                         | Description                                                              |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| Must be at the end           | Parameters with defaults must be at the **end** of parameter list        |
+| Constants only               | Default value must be literal or UPPERCASE constant (must be known at compile time) |
+| Positional only              | No keyword arguments - only positional arguments                         |
+| Caller-side substitution     | The compiler substitutes default values at the **call site**             |
+
+#### Supported Types and Default Values
+
+| Parameter type               | Allowed default                                             |
+| ---------------------------- | ----------------------------------------------------------- |
+| `byte`, `sbyte`, `word`, `int` | Literal (`10`, `0xFF`) or constant (`MY_CONST`)           |
+| `bool`                       | `True`, `False`, or constant                                |
+| `char`                       | Char literal (`'x'`) or constant                            |
+| `f16`, `f32`, `float`        | Float literal (`3.14`) or constant                          |
+| `tuple[T]`                   | Global tuple name                                           |
+| `alias[T]`                   | `alias(ADDR)` form with literal or constant address         |
+
+**Example with constant expression:**
+
+```python
+BASE = 0x0400
+OFFSET = 40
+
+def set_pos(addr: word = BASE + OFFSET):  # constant expression OK
+    # ...
+    pass
+```
+
+#### Default Values in Methods
+
+Default values also work in methods, including `__init__`:
+
+```python
+class Player:
+    x: int = 0
+    y: int = 0
+    health: byte = 100
+
+    def __init__(start_x: int = 160, start_y: int = 100):
+        self.x = start_x
+        self.y = start_y
+
+    def move(dx: int = 1, dy: int = 0):
+        self.x = self.x + dx
+        self.y = self.y + dy
+
+def main():
+    p: Player
+    p()                    # x=160, y=100 (both defaults)
+    p.move()               # x+1, y+0 (both defaults)
+    p.move(5)              # x+5, y+0 (dy default)
+    p.move(5, 3)           # x+5, y+3 (no defaults)
+```
+
+#### Tuple and Alias Default
+
+```python
+default_colors: tuple[byte] = (0, 2, 5, 7, 10, 14)
+
+def draw(colors: tuple[byte] = default_colors):
+    # ...
+    pass
+
+SCREEN = 0x0400
+
+def print_at(screen: alias[byte] = alias(SCREEN)):
+    # ...
+    pass
+```
+
+> **Note:** Default values are substituted at compile time on the caller side. This means that if you export a library function with default parameters, the default value is stored in the library's PMI file and substituted when the calling code is compiled.
+
 ### 8.3 The main() Entry Point
 
 Every PyCo program **must** contain a `main()` function. This is the program's entry point - execution starts here. Without a `main()` function, the compiler reports an error.
@@ -2792,6 +2888,51 @@ class Enemy:
 2. `__init__` method runs (if exists and if called with arguments)
 
 **Important:** The initializer call `pos()` is **NOT an expression** - it cannot appear on the right side of an assignment or as a function argument. It's a statement that operates on an already-declared object.
+
+### 9.3.1 Dynamic Memory Allocation (__new__)
+
+The `__new__` method is a **special constructor** that enables dynamic memory allocation during object creation. The key difference from `__init__`:
+
+- **`__new__`** runs in the **caller's** stack frame (allocations persist after the method returns)
+- **`__init__`** gets its own stack frame (allocations are freed on return)
+
+This means that memory allocated with `alloc()` inside `__new__` belongs to the calling function's (e.g., `main()`) frame and remains valid as long as that function runs.
+
+**Constructor call sequence when calling `obj()`:**
+1. **Default values are set** (property default values)
+2. **`__new__` runs** (if exists) - dynamic allocation happens here
+3. **`__init__` runs** (if exists) - user initialization
+
+```python
+class DynamicBuffer:
+    data: alias[array[byte, 256]]   # Pointer to dynamic memory
+    size: byte = 0
+
+    def __new__(sz: byte):
+        # alloc() allocates memory in the caller's frame
+        alloc(self.data, sz)
+
+    def __init__(sz: byte):
+        # Runs after __new__ - self.data is already a valid pointer
+        self.size = sz
+        memfill(self.data, 0)       # Zero-fill
+
+def main():
+    buf: DynamicBuffer
+    buf(64)                         # 64 bytes allocated in main()'s frame
+    buf.data[0] = 42                # Works!
+    # Memory remains valid as long as main() runs
+```
+
+**Important rules:**
+- `__new__` and `__init__` parameters must be **identical**
+- `__new__` **cannot have a return value**
+- Use `alloc()` inside `__new__` for dynamic memory allocation
+
+**When to use `__new__`?**
+- For variable-sized objects (e.g., dynamic arrays)
+- When memory size is only known at runtime
+- When an object needs large, dynamically allocated buffers
 
 ### 9.4 Methods
 
@@ -3874,6 +4015,81 @@ class Display:
 
 ---
 
+### alloc
+
+Dynamic memory allocation on the software stack. `alloc()` reserves a specified amount of memory and stores its base address in an alias variable.
+
+**Syntax:**
+
+```python
+alloc(alias_variable, size)
+```
+
+**Parameters:**
+
+| Parameter        | Type        | Description                                      |
+| ---------------- | ----------- | ------------------------------------------------ |
+| `alias_variable` | alias       | The alias variable that receives the address     |
+| `size`           | byte/word   | Number of bytes to allocate                      |
+
+**Behavior:**
+- Memory is allocated on the **software stack (SSP)**
+- SSP is incremented by the specified size
+- The allocation base address is stored in the alias variable
+- Memory remains valid as long as the containing function runs
+
+**Memory lifetime:**
+
+| Context           | Lifetime                                                |
+| ----------------- | ------------------------------------------------------- |
+| Normal function   | Until the function returns (automatically freed)        |
+| `__new__` method  | Until the **caller** function returns (persists!)       |
+
+**Example - local buffer:**
+
+```python
+def process_data():
+    temp: alias[array[byte, 256]]
+    alloc(temp, 100)            # 100 byte temporary buffer
+    # ... use it ...
+    # Automatically freed when process_data() returns
+```
+
+**Example - dynamic object (with `__new__`):**
+
+```python
+class Frame:
+    char_buf: alias[array[byte, 2000]]
+    color_buf: alias[array[byte, 2000]]
+    width: byte
+    height: byte
+
+    def __new__(w: byte, h: byte):
+        size: word
+        size = word(w) * word(h)
+        alloc(self.char_buf, size)     # Character buffer
+        alloc(self.color_buf, size)    # Color buffer
+
+    def __init__(w: byte, h: byte):
+        self.width = w
+        self.height = h
+        memfill(self.char_buf, 32)     # Fill with spaces
+        memfill(self.color_buf, 1)     # White color
+
+def main():
+    f: Frame
+    f(40, 10)                          # 400 + 400 = 800 bytes allocated
+    f.char_buf[0] = 65                 # 'A' at first position
+    # Buffers remain valid as long as main() runs
+```
+
+**Important notes:**
+- `alloc()` does **not zero-fill** the allocated memory - use `memfill()` if needed
+- **Maximum allocatable size** depends on available stack space
+- Use carefully in recursive calls - each call increases the stack
+
+---
+
 ## 13. Special Features
 
 ### 13.1 Inline Assembly (__asm__)
@@ -3988,11 +4204,11 @@ This summary contains the most important differences between Python and PyCo.
 
 #### Functions
 
-| Python          | PyCo                      | Note                            |
-| --------------- | ------------------------- | ------------------------------- |
-| `def f(*args):` | ❌ No variadic             | Fixed parameter count           |
-| `def f(x=10):`  | ❌ No default value        | All parameters must be given    |
-| `f(name="x")`   | ❌ No keyword arg          | Only positional                 |
+| Python          | PyCo                      | Note                                  |
+| --------------- | ------------------------- | ------------------------------------- |
+| `def f(*args):` | ❌ No variadic             | Fixed parameter count                 |
+| `def f(x=10):`  | `def f(x: byte = 10):`    | ✅ Default values supported            |
+| `f(name="x")`   | ❌ No keyword arg          | Only positional                       |
 | `return obj`    | `return obj` → `alias[T]` | Composite type only as alias    |
 | `lambda x: x+1` | ❌ No lambda               | Only `def`                      |
 
@@ -4038,8 +4254,10 @@ class Enemy:                      class Enemy:
         self.hp = hp                  def __init__(hp_val: int):
                                           self.hp = hp_val
 
-def greet(name="World"):          def greet(name: alias[string]):
-    print(f"Hello {name}!")           print("Hello ", name, "!\n")
+def greet(name="World"):          def greet(times: byte = 1):
+    print(f"Hello {name}!")           i: byte
+                                      for i in range(0, times):
+                                          print("Hello!\n")
 
 def main():                       def main():
     x = 10                            x: int = 10
