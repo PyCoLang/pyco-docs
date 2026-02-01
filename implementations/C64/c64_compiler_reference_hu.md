@@ -242,14 +242,25 @@ __F_foo:
     rts
 ```
 
-**Stack layout a callee-ben:**
+**Stack layout a callee-ben (TSX után):**
+
+Leaf függvény (nincs lokális változó, nincs FP mentés):
 ```
-SP+1: mentett FP (lo)
-SP+2: mentett FP (hi)
-SP+3: visszatérési cím (lo)
-SP+4: visszatérési cím (hi)
-SP+5: első paraméter (offset 0)
-SP+6: második paraméter (offset 1)
+$0101,x: visszatérési cím (lo)
+$0102,x: visszatérési cím (hi)
+$0103,x: első paraméter (offset 0)
+$0104,x: második paraméter (offset 1)
+...
+```
+
+Non-leaf függvény (lokálisok vannak, FP mentve):
+```
+$0101,x: mentett FP (lo)
+$0102,x: mentett FP (hi)
+$0103,x: visszatérési cím (lo)
+$0104,x: visszatérési cím (hi)
+$0105,x: első paraméter (offset 0)
+$0106,x: második paraméter (offset 1)
 ...
 ```
 

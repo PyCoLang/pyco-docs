@@ -3949,6 +3949,62 @@ For overlapping regions (same array), the compiler automatically selects the cor
 | Same array, both offsets constant | Correct   | Compile-time   |
 | Same array, variable offset       | Correct   | Runtime        |
 
+### memcpy
+
+Fast 1D memory copy. Copies bytes from source to destination.
+
+**Supported types:** `array`, `string`, `alias[array]`, `alias[string]`
+
+**3-parameter syntax (no offset):**
+
+```python
+memcpy(src, dst, count)
+```
+
+**5-parameter syntax (with offsets):**
+
+```python
+memcpy(src, src_offset, dst, dst_offset, count)
+```
+
+**Parameters:**
+
+| Parameter    | Type         | Description                             |
+| ------------ | ------------ | --------------------------------------- |
+| `src`        | array/string | Source array or string                  |
+| `src_offset` | word         | Start offset in source (5-param only)   |
+| `dst`        | array/string | Destination array or string             |
+| `dst_offset` | word         | Start offset in destination (5-param)   |
+| `count`      | word         | Number of bytes to copy                 |
+
+**Examples:**
+
+```python
+src: array[byte, 100][0xC000]
+dst: array[byte, 100][0xC100]
+
+# Copy first 50 bytes
+memcpy(src, dst, 50)
+
+# Copy 20 bytes from src[10] to dst[30]
+memcpy(src, 10, dst, 30, 20)
+
+# Overlapping copy (same array scroll left)
+screen: array[byte, 1000][0x0400]
+memcpy(screen, 1, screen, 0, 39)  # Scroll left by 1 char
+```
+
+**Automatic direction detection:**
+
+For overlapping regions (same array), the compiler automatically selects forward or backward copy:
+
+| Case                              | Direction | Determined at  |
+| --------------------------------- | --------- | -------------- |
+| Different arrays                  | Forward   | Compile-time   |
+| Same array, dst < src             | Forward   | Compile-time   |
+| Same array, dst > src             | Backward  | Compile-time   |
+| Same array, variable offset       | Correct   | Runtime        |
+
 ### memfill
 
 Fast memory fill. Fills an array with a specified value.

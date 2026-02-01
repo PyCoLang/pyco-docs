@@ -3800,6 +3800,62 @@ blkcpy(tile, 0, 4, screen, 5*40+10, 40, 4, 4)
 | Azonos tömb, mindkét offset fix   | Helyes   | Fordítási idő  |
 | Azonos tömb, változó offset       | Helyes   | Futásidő       |
 
+### memcpy
+
+Gyors 1D memória másolás. Bájtokat másol a forrásból a célba.
+
+**Támogatott típusok:** `array`, `string`, `alias[array]`, `alias[string]`
+
+**3 paraméteres szintaxis (offset nélkül):**
+
+```python
+memcpy(src, dst, count)
+```
+
+**5 paraméteres szintaxis (offsettel):**
+
+```python
+memcpy(src, src_offset, dst, dst_offset, count)
+```
+
+**Paraméterek:**
+
+| Paraméter    | Típus        | Leírás                                  |
+| ------------ | ------------ | --------------------------------------- |
+| `src`        | array/string | Forrás tömb vagy string                 |
+| `src_offset` | word         | Kezdő offset a forrásban (5-param)      |
+| `dst`        | array/string | Cél tömb vagy string                    |
+| `dst_offset` | word         | Kezdő offset a célban (5-param)         |
+| `count`      | word         | Másolandó bájtok száma                  |
+
+**Példák:**
+
+```python
+src: array[byte, 100][0xC000]
+dst: array[byte, 100][0xC100]
+
+# Első 50 bájt másolása
+memcpy(src, dst, 50)
+
+# 20 bájt másolása src[10]-ből dst[30]-ba
+memcpy(src, 10, dst, 30, 20)
+
+# Átfedő másolás (görgetés balra)
+screen: array[byte, 1000][0x0400]
+memcpy(screen, 1, screen, 0, 39)  # 1 karakterrel balra görget
+```
+
+**Automatikus irány-detektálás:**
+
+Átfedő régiók esetén (azonos tömb) a fordító automatikusan forward vagy backward másolást választ:
+
+| Eset                              | Irány    | Meghatározás   |
+| --------------------------------- | -------- | -------------- |
+| Különböző tömbök                  | Forward  | Fordítási idő  |
+| Azonos tömb, dst < src            | Forward  | Fordítási idő  |
+| Azonos tömb, dst > src            | Backward | Fordítási idő  |
+| Azonos tömb, változó offset       | Helyes   | Futásidő       |
+
 ### memfill
 
 Gyors memória kitöltés. Egy tömböt tölt ki a megadott értékkel.

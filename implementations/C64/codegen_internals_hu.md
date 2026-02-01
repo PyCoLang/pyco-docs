@@ -104,26 +104,34 @@ Memóriában (5 byte):
 
 ## 3. Függvényhívási konvenció
 
-### 3.1 Software Stack
+A PyCo **hibrid stack modellt** használ: primitív paraméterek a 6502 hardver stack-en ($0100-$01FF), lokális változók a software stack-en (SSP).
 
-A 6502 hardver stackje csak 256 byte. Ezért **software stack**-et használunk a lokális változókhoz.
-
-**Nincs fix méretkorlát!** A stack a program végétől indul és felfelé nő:
+### 3.1 Stack architektúra
 
 ```
-$0801         ┌─────────────────────────────┐
-              │ Program (code + data + bss) │
-$xxxx         └─────────────────────────────┘ ← __program_end
-              ┌─────────────────────────────┐
-              │ STACK                       │
-              │ (felfelé nő, ameddig kell)  │
-$CFFF         └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+Hardware Stack ($0100-$01FF):        Software Stack (SSP):
+┌─────────────────────────────┐      ┌─────────────────────────────┐
+│ [param N-1]                 │      │ Program (code + data + bss) │
+│ [param N-2]                 │      ├─────────────────────────────┤ ← __program_end
+│ ...                         │      │ [local 0]                   │ ← FP
+│ [param 0]                   │      │ [local 1]                   │
+│ [ret addr hi]               │      │ ...                         │
+│ [ret addr lo]               │ ←SP  │ [local N]                   │ ← SSP
+└─────────────────────────────┘      └─────────────────────────────┘
+256 byte limit!                       Felfelé nő, nincs fix limit
 ```
+
+**Miért hibrid?**
+- HW Stack gyorsabb (TSX + indexed) de max 256 byte
+- SSP lassabb (16-bit pointer) de korlátlan
+- Primitív paraméterek beférnek a HW stack-re
+- Lokális változók és nagy adatok az SSP-re kerülnek
 
 **Inicializálás:**
 ```asm
 .label __program_end = *
 .label SSP = $0A
+.label FP = $08
 
 _pyco_init:
     // BASIC ROM kikapcsolása
@@ -131,7 +139,7 @@ _pyco_init:
     and #%11111110
     sta $01
 
-    // Stack pointer inicializálása
+    // Software Stack pointer inicializálása
     lda #<__program_end
     sta SSP
     lda #>__program_end
@@ -142,59 +150,77 @@ _pyco_init:
 
 ### 3.2 Hívási sorrend
 
-1. **Caller** (hívó):
-   - Stack frame növelése a paramétereknek
-   - Paraméterek a stack-re
-   - `jsr function_name`
-   - Visszatérési érték: `retval` ($0F-$12)
-
-2. **Callee** (hívott):
-   - Stack frame növelése a lokális változóknak
-   - Függvény törzs végrehajtása
-   - Frame cleanup (params + locals)
-   - `rts`
-
-**Generált kód struktúra:**
+**1. Caller (hívó fél):**
 ```asm
-function_name:
-    // Prologue: FP mentése, locals allokálása
-    lda FP
-    pha
+// foo(10, 20) hívása
+    lda #20         // Paraméterek FORDÍTOTT sorrendben (LIFO)
+    pha             // param1 → HW stack
+    lda #10
+    pha             // param0 → HW stack
+    jsr __F_foo
+    // Visszatérési érték: A (1 byte) vagy retval (2-4 byte)
+    pla             // Paraméterek eltávolítása
+    pla
+```
+
+**2. Callee (hívott fél):**
+```asm
+__F_foo:
+    // Prologue: FP mentése, lokálisok allokálása
     lda FP+1
     pha
+    lda FP
+    pha
 
-    clc
-    lda SSP
+    lda SSP          // FP = SSP
     sta FP
-    adc #LOCAL_SIZE
+    lda SSP+1
+    sta FP+1
+
+    clc              // SSP += locals_size
+    lda SSP
+    adc #LOCALS_SIZE
     sta SSP
     bcc +
     inc SSP+1
 +:
-    // ... function body ...
+    // Paraméterek elérése: TSX + indexed
+    tsx
+    lda $0105,x      // param0 (offset = FP_saved(2) + ret_addr(2) + 1)
+    lda $0106,x      // param1
+    // ...
 
-    // Epilogue: locals felszabadítása, FP visszaállítása
+    // Lokálisok elérése: (FP),y
+    ldy #0
+    lda (FP),y       // local0
+    ldy #1
+    sta (FP),y       // local1
+    // ...
+
+    // Epilogue: lokálisok felszabadítása, FP visszaállítása
     sec
     lda SSP
-    sbc #LOCAL_SIZE
+    sbc #LOCALS_SIZE
     sta SSP
     bcs +
     dec SSP+1
 +:
     pla
-    sta FP+1
-    pla
     sta FP
+    pla
+    sta FP+1
     rts
 ```
 
 ### 3.3 Paraméter átadás
 
-| Kategória             | Paraméter típus           | Átadás módja          | Hely        |
-| --------------------- | ------------------------- | --------------------- | ----------- |
-| Primitív (1-2B)       | `byte`, `int`, stb.       | Érték szerint         | Stack frame |
-| Összetett (közvetlen) | `Enemy`, `array[byte,10]` | **FORDÍTÁSI HIBA**    | -           |
-| Alias                 | `alias[Enemy]`            | Pointer (2 byte)      | Stack frame |
+| Kategória             | Paraméter típus           | Átadás módja          | Hely                |
+| --------------------- | ------------------------- | --------------------- | ------------------- |
+| Primitív (1 byte)     | `byte`, `sbyte`, `char`   | Érték szerint (PHA)   | HW Stack            |
+| Primitív (2 byte)     | `word`, `int`             | Érték szerint (2×PHA) | HW Stack            |
+| Primitív (4 byte)     | `float`                   | Érték szerint (4×PHA) | HW Stack            |
+| Összetett (közvetlen) | `Enemy`, `array[byte,10]` | **FORDÍTÁSI HIBA**    | -                   |
+| Alias                 | `alias[Enemy]`            | Pointer (2 byte)      | HW Stack            |
 
 **Automatikus cím átadás alias paramétereknél:**
 
@@ -204,17 +230,96 @@ def process(e: alias[Enemy]):
 
 def main():
     enemy: Enemy
-    process(enemy)  # Fordító: process(addr(enemy))
+    process(enemy)  # Fordító automatikusan: process(addr(enemy))
+```
+
+**HW Stack paraméter elérés:**
+```asm
+// Leaf függvény (nincs FP mentés): offset = ret_addr(2) + 1
+tsx
+lda $0103,x      // param0
+
+// Nem-leaf függvény (FP mentve): offset = FP(2) + ret_addr(2) + 1
+tsx
+lda $0105,x      // param0
 ```
 
 ### 3.4 Visszatérési érték
 
-| Kategória         | Visszatérési típus | Hol van az érték      | Élettartam          |
-| ----------------- | ------------------ | --------------------- | ------------------- |
-| Primitív (1 byte) | `byte`, `bool`     | A regiszter           | Azonnal használható |
-| Primitív (2 byte) | `word`, `int`      | `retval` ($0F-$10)    | Azonnal használható |
-| Primitív (4 byte) | `float`            | `retval` ($0F-$12)    | Azonnal használható |
-| Alias             | `alias[Enemy]`     | `retval` (pointer)    | Statement végéig!   |
+| Kategória         | Visszatérési típus | Hol van az érték   | Élettartam          |
+| ----------------- | ------------------ | ------------------ | ------------------- |
+| Primitív (1 byte) | `byte`, `bool`     | A regiszter        | Azonnal használható |
+| Primitív (2 byte) | `word`, `int`      | `retval` ($0F-$10) | Azonnal használható |
+| Primitív (4 byte) | `float`            | `retval` ($0F-$12) | Azonnal használható |
+| Alias             | `alias[Enemy]`     | `retval` (pointer) | Statement végéig!   |
+
+### 3.5 Caller Frame Allocation (metódusok)
+
+Metódushívásnál a **caller allokálja a callee teljes frame-jét** (paraméterek + lokálisok). Ez biztosítja, hogy alias-visszatérésű hívások (pl. `str()`) a frame után allokáljanak.
+
+```asm
+// player.move(10, 5) hívása
+    // 1. Caller FP mentése
+    lda FP
+    pha
+    lda FP+1
+    pha
+
+    // 2. Új frame base mentése (FP még a caller frame-re mutat az arg eval alatt!)
+    lda SSP
+    pha
+    lda SSP+1
+    pha
+
+    // 3. Frame allokálása (params + locals)
+    clc
+    lda SSP
+    adc #FRAME_SIZE
+    sta SSP
+    bcc +
+    inc SSP+1
++:
+    // 4. Paraméterek írása a frame-be (peek frame base from HW stack)
+    tsx
+    lda $0102,x      // frame_base_lo
+    sta tmp4
+    lda $0101,x      // frame_base_hi
+    sta tmp5
+    lda #10          // param0
+    ldy #0
+    sta (tmp4),y
+    lda #5           // param1
+    iny
+    sta (tmp4),y
+
+    // 5. FP beállítása az új frame-re
+    pla
+    sta FP+1
+    pla
+    sta FP
+
+    // 6. Self pointer betöltése
+    lda #<__B_player
+    sta ZP_SELF
+    lda #>__B_player
+    sta ZP_SELF+1
+
+    // 7. Metódus hívás
+    jsr __C_Player_move
+
+    // 8. Caller FP visszaállítása + frame cleanup
+    pla
+    sta FP+1
+    pla
+    sta FP
+    sec
+    lda SSP
+    sbc #FRAME_SIZE
+    sta SSP
+    bcs +
+    dec SSP+1
++:
+```
 
 ---
 

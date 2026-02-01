@@ -242,14 +242,25 @@ __F_foo:
     rts
 ```
 
-**Stack layout in callee:**
+**Stack layout in callee (after TSX):**
+
+Leaf function (no local variables, no FP save):
 ```
-SP+1: saved FP (lo)
-SP+2: saved FP (hi)
-SP+3: return address (lo)
-SP+4: return address (hi)
-SP+5: first parameter (offset 0)
-SP+6: second parameter (offset 1)
+$0101,x: return address (lo)
+$0102,x: return address (hi)
+$0103,x: first parameter (offset 0)
+$0104,x: second parameter (offset 1)
+...
+```
+
+Non-leaf function (has locals, FP saved):
+```
+$0101,x: saved FP (lo)
+$0102,x: saved FP (hi)
+$0103,x: return address (lo)
+$0104,x: return address (hi)
+$0105,x: first parameter (offset 0)
+$0106,x: second parameter (offset 1)
 ...
 ```
 

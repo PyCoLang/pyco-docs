@@ -104,26 +104,34 @@ In memory (5 bytes):
 
 ## 3. Function calling convention
 
-### 3.1 Software Stack
+PyCo uses a **hybrid stack model**: primitive parameters on the 6502 hardware stack ($0100-$01FF), local variables on the software stack (SSP).
 
-The 6502 hardware stack is only 256 bytes. Therefore, we use a **software stack** for local variables.
-
-**No fixed size limit!** The stack starts at program end and grows upward:
+### 3.1 Stack architecture
 
 ```
-$0801         ┌─────────────────────────────┐
-              │ Program (code + data + bss) │
-$xxxx         └─────────────────────────────┘ ← __program_end
-              ┌─────────────────────────────┐
-              │ STACK                       │
-              │ (grows upward as needed)    │
-$CFFF         └ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┘
+Hardware Stack ($0100-$01FF):        Software Stack (SSP):
+┌─────────────────────────────┐      ┌─────────────────────────────┐
+│ [param N-1]                 │      │ Program (code + data + bss) │
+│ [param N-2]                 │      ├─────────────────────────────┤ ← __program_end
+│ ...                         │      │ [local 0]                   │ ← FP
+│ [param 0]                   │      │ [local 1]                   │
+│ [ret addr hi]               │      │ ...                         │
+│ [ret addr lo]               │ ←SP  │ [local N]                   │ ← SSP
+└─────────────────────────────┘      └─────────────────────────────┘
+256 byte limit!                       Grows upward, no fixed limit
 ```
+
+**Why hybrid?**
+- HW Stack is faster (TSX + indexed) but limited to 256 bytes
+- SSP is slower (16-bit pointer) but unlimited
+- Primitive parameters fit in HW stack
+- Local variables and large data go on SSP
 
 **Initialization:**
 ```asm
 .label __program_end = *
 .label SSP = $0A
+.label FP = $08
 
 _pyco_init:
     // Disable BASIC ROM
@@ -131,7 +139,7 @@ _pyco_init:
     and #%11111110
     sta $01
 
-    // Initialize stack pointer
+    // Initialize Software Stack pointer
     lda #<__program_end
     sta SSP
     lda #>__program_end
@@ -142,59 +150,77 @@ _pyco_init:
 
 ### 3.2 Calling sequence
 
-1. **Caller**:
-   - Increase stack frame for parameters
-   - Push parameters to stack
-   - `jsr function_name`
-   - Return value in `retval` ($0F-$12)
-
-2. **Callee**:
-   - Increase stack frame for local variables
-   - Execute function body
-   - Frame cleanup (params + locals)
-   - `rts`
-
-**Generated code structure:**
+**1. Caller:**
 ```asm
-function_name:
+// Calling foo(10, 20)
+    lda #20         // Parameters in REVERSE order (LIFO)
+    pha             // param1 → HW stack
+    lda #10
+    pha             // param0 → HW stack
+    jsr __F_foo
+    // Return value: A (1 byte) or retval (2-4 bytes)
+    pla             // Remove parameters
+    pla
+```
+
+**2. Callee:**
+```asm
+__F_foo:
     // Prologue: save FP, allocate locals
-    lda FP
-    pha
     lda FP+1
     pha
+    lda FP
+    pha
 
-    clc
-    lda SSP
+    lda SSP          // FP = SSP
     sta FP
-    adc #LOCAL_SIZE
+    lda SSP+1
+    sta FP+1
+
+    clc              // SSP += locals_size
+    lda SSP
+    adc #LOCALS_SIZE
     sta SSP
     bcc +
     inc SSP+1
 +:
-    // ... function body ...
+    // Parameter access: TSX + indexed
+    tsx
+    lda $0105,x      // param0 (offset = FP_saved(2) + ret_addr(2) + 1)
+    lda $0106,x      // param1
+    // ...
+
+    // Local variable access: (FP),y
+    ldy #0
+    lda (FP),y       // local0
+    ldy #1
+    sta (FP),y       // local1
+    // ...
 
     // Epilogue: free locals, restore FP
     sec
     lda SSP
-    sbc #LOCAL_SIZE
+    sbc #LOCALS_SIZE
     sta SSP
     bcs +
     dec SSP+1
 +:
     pla
-    sta FP+1
-    pla
     sta FP
+    pla
+    sta FP+1
     rts
 ```
 
 ### 3.3 Parameter passing
 
-| Category              | Parameter type            | Passing method        | Location    |
-| --------------------- | ------------------------- | --------------------- | ----------- |
-| Primitive (1-2B)      | `byte`, `int`, etc.       | By value              | Stack frame |
-| Composite (direct)    | `Enemy`, `array[byte,10]` | **COMPILE ERROR**     | -           |
-| Alias                 | `alias[Enemy]`            | Pointer (2 bytes)     | Stack frame |
+| Category              | Parameter type            | Passing method        | Location            |
+| --------------------- | ------------------------- | --------------------- | ------------------- |
+| Primitive (1 byte)    | `byte`, `sbyte`, `char`   | By value (PHA)        | HW Stack            |
+| Primitive (2 bytes)   | `word`, `int`             | By value (2×PHA)      | HW Stack            |
+| Primitive (4 bytes)   | `float`                   | By value (4×PHA)      | HW Stack            |
+| Composite (direct)    | `Enemy`, `array[byte,10]` | **COMPILE ERROR**     | -                   |
+| Alias                 | `alias[Enemy]`            | Pointer (2 bytes)     | HW Stack            |
 
 **Automatic address passing for alias parameters:**
 
@@ -204,17 +230,96 @@ def process(e: alias[Enemy]):
 
 def main():
     enemy: Enemy
-    process(enemy)  # Compiler: process(addr(enemy))
+    process(enemy)  # Compiler automatically: process(addr(enemy))
+```
+
+**HW Stack parameter access:**
+```asm
+// Leaf function (no FP save): offset = ret_addr(2) + 1
+tsx
+lda $0103,x      // param0
+
+// Non-leaf function (FP saved): offset = FP(2) + ret_addr(2) + 1
+tsx
+lda $0105,x      // param0
 ```
 
 ### 3.4 Return value
 
-| Category          | Return type    | Where is the value    | Lifetime            |
-| ----------------- | -------------- | --------------------- | ------------------- |
-| Primitive (1 byte)| `byte`, `bool` | A register            | Immediately usable  |
-| Primitive (2 byte)| `word`, `int`  | `retval` ($0F-$10)    | Immediately usable  |
-| Primitive (4 byte)| `float`        | `retval` ($0F-$12)    | Immediately usable  |
-| Alias             | `alias[Enemy]` | `retval` (pointer)    | Until statement end!|
+| Category          | Return type    | Where is the value | Lifetime            |
+| ----------------- | -------------- | ------------------ | ------------------- |
+| Primitive (1 byte)| `byte`, `bool` | A register         | Immediately usable  |
+| Primitive (2 byte)| `word`, `int`  | `retval` ($0F-$10) | Immediately usable  |
+| Primitive (4 byte)| `float`        | `retval` ($0F-$12) | Immediately usable  |
+| Alias             | `alias[Enemy]` | `retval` (pointer) | Until statement end!|
+
+### 3.5 Caller Frame Allocation (methods)
+
+For method calls, the **caller allocates the callee's full frame** (parameters + locals). This ensures that alias-returning calls (like `str()`) allocate AFTER the frame.
+
+```asm
+// Calling player.move(10, 5)
+    // 1. Save caller's FP
+    lda FP
+    pha
+    lda FP+1
+    pha
+
+    // 2. Save new frame base (FP still points to caller's frame during arg eval!)
+    lda SSP
+    pha
+    lda SSP+1
+    pha
+
+    // 3. Allocate frame (params + locals)
+    clc
+    lda SSP
+    adc #FRAME_SIZE
+    sta SSP
+    bcc +
+    inc SSP+1
++:
+    // 4. Write parameters to frame (peek frame base from HW stack)
+    tsx
+    lda $0102,x      // frame_base_lo
+    sta tmp4
+    lda $0101,x      // frame_base_hi
+    sta tmp5
+    lda #10          // param0
+    ldy #0
+    sta (tmp4),y
+    lda #5           // param1
+    iny
+    sta (tmp4),y
+
+    // 5. Set FP to new frame
+    pla
+    sta FP+1
+    pla
+    sta FP
+
+    // 6. Load self pointer
+    lda #<__B_player
+    sta ZP_SELF
+    lda #>__B_player
+    sta ZP_SELF+1
+
+    // 7. Method call
+    jsr __C_Player_move
+
+    // 8. Restore caller's FP + frame cleanup
+    pla
+    sta FP+1
+    pla
+    sta FP
+    sec
+    lda SSP
+    sbc #FRAME_SIZE
+    sta SSP
+    bcs +
+    dec SSP+1
++:
+```
 
 ---
 
