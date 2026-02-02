@@ -19,28 +19,71 @@ The PyCo module system enables the use of external code from other `.pyco` files
 
 ### Static Import: `from X import`
 
-Listed elements are **compiled into the PRG**, directly usable:
+Static import handles **three different elements**:
+
+#### Function Import
+
+```python
+from math import sin, cos         # sin, cos code is compiled in
+```
+
+Function code is embedded into the PRG, callable directly without prefix.
+
+#### Class Type Import
+
+```python
+from gfx import Sprite            # Sprite TYPE import (NOT code!)
+```
+
+The class **type definition** is imported - usable as type annotation (`obj: Sprite`).
+Code is **NOT** embedded! Methods must be imported separately.
+
+#### Method Import (Selective)
+
+```python
+from gfx.Sprite import draw       # draw method code is compiled in (with DCE)
+```
+
+Only the specified method code is embedded, other methods are not.
+**IMPORTANT:** This does NOT register the `Sprite` type! If you need the type too, import it separately.
+
+#### Tuple Import
+
+```python
+from screen import row_offsets    # Global tuple is compiled in
+```
+
+#### Complete Example
 
 ```python
 # File beginning - STATIC import
-from math import sin, cos         # sin, cos code is compiled in
-from gfx import Sprite, draw_line # Sprite class, draw_line func compiled in
-from screen import row_offsets    # Global tuple is compiled in
+from math import sin, cos         # Functions: code compiles in
+from gfx import Sprite            # Class: TYPE import (NOT code!)
+from gfx.Sprite import draw, update  # Methods: code compiles in (with DCE)
+from screen import row_offsets    # Tuple: data compiles in
 
 def main():
     x = sin(0.5)                  # Direct call, no prefix!
     y = cos(0.5)
-    s: Sprite
-    s()
-    draw_line(0, 0, x, y)
+    s: Sprite                     # Type usage - works!
+    s()                           # __init__ (automatically imported)
+    s.draw()                      # Explicitly imported method
+    s.update()                    # Explicitly imported method
     offset: word = row_offsets[5] # Tuple access
 ```
 
 **Characteristics:**
 
+| Import type      | Compiled?       | Usage                               |
+| ---------------- | --------------- | ----------------------------------- |
+| Function         | ✓ Code          | Direct call: `sin()`                |
+| Class            | ✗ Type only     | Type annotation: `obj: Sprite`      |
+| Method           | ✓ Code (DCE)    | Method call: `obj.draw()`           |
+| Tuple            | ✓ Data          | Element access: `tuple[i]`          |
+
 | Property           | Value                                              |
 | ------------------ | -------------------------------------------------- |
-| Compile-time       | Code compiles into PRG                             |
+| Compile-time       | Type/code compiles into PRG                        |
 | Runtime overhead   | None (static linking)                              |
 | Usage              | No prefix: `sin()`, `Sprite`, `tuple[]`            |
 | Tree-shaking       | Only listed elements are compiled in               |
@@ -907,23 +950,45 @@ The `.pmi` file uses a compact binary format readable by a C64-native compiler.
 
 #### DCE (Dead Code Elimination) Support
 
-PMI v4 includes offset, size, and dependency information for each function and method. This enables **selective class import**:
+PMI v4 includes offset, size, and dependency information for each function and method. This enables **selective method import**:
 
 ```python
-# Full import - ALL methods embedded (~11KB)
+# Type import - code is NOT embedded!
 from text import Text
 
-# Selective import - ONLY specified methods embedded (~500B)
+# Method import - ONLY specified method code is embedded (~500B)
 from text.Text import print_at
 ```
 
+**The new import semantics (Objective-C category style):**
+
+Types and methods are **independent** of each other:
+- `from module import Class` → Only the type definition (NO code!)
+- `from module.Class import method` → Only the method code (type is NOT registered!)
+
+This allows importing methods from **multiple modules** for the same class:
+
+```python
+from text import Text                # Text TYPE from text module
+from text.Text import print_at       # print_at METHOD from text module
+from extended_text.Text import fancy_print  # fancy_print METHOD from another module!
+
+def main():
+    t: Text                          # OK - type from text
+    t.print_at(0, 0, s"Hello")       # OK - text.Text.print_at
+    t.fancy_print(s"World")          # OK - extended_text.Text.fancy_print
+```
+
+**IMPORTANT:** Method import does **NOT** register the type! If you need it for type annotations, import it separately.
+
 **How it works:**
 1. Compiler reads PMI to get DCE info for each method
-2. For selective imports, determines which methods are needed:
+2. For method imports, determines which methods are needed:
    - Explicitly imported methods
    - `__defaults__` and `__init__` (always needed for constructors)
    - Transitive dependencies (if method A calls method B, B is included)
 3. Only the required code chunks are embedded in the final program
+4. Methods are stored in `_imported_class_methods` dict, NOT as part of the type
 
 **Example DCE info in PMI:**
 ```
@@ -1410,11 +1475,22 @@ Runtime Error: Module format error (invalid magic)
 
 ## Summary
 
+### Static Import Types
+
+| Syntax                       | What is imported?   | Usage                    |
+| ---------------------------- | ------------------- | ------------------------ |
+| `from X import func`         | Function code       | `func()`                 |
+| `from X import Class`        | Class TYPE          | `obj: Class`             |
+| `from X.Class import method` | Method code (DCE)   | `obj.method()`           |
+| `from X import tuple`        | Tuple data          | `tuple[i]`               |
+
+**IMPORTANT:** Class import only brings in the type, NOT code! Methods must be imported separately.
+
 ### Two Import Modes
 
 | Syntax               | Compile-time            | Runtime               | Usage             |
 | -------------------- | ----------------------- | --------------------- | ----------------- |
-| `from X import a, b` | Code compiles in        | -                     | `a()`, `b()`      |
+| `from X import a, b` | Type/code compiles in   | -                     | `a()`, `b()`      |
 | `import X`           | Info Section + BSS ptr  | `load_module(X)`      | `X.a()`, `X.b()`  |
 
 ### Export Rules
@@ -1442,5 +1518,5 @@ Runtime Error: Module format error (invalid magic)
 
 ---
 
-*Version: 3.7 - 2026-01-20*
-*Changes: JMP/JSR markers ($42/$52) for modules larger than 2KB, LDA ABS marker ($22)*
+*Version: 3.8 - 2026-02-02*
+*Changes: New import semantics - class import only brings type, method import separate (Objective-C category style)*

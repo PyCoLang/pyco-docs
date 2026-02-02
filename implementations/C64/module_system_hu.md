@@ -19,28 +19,71 @@ A PyCo modul rendszer lehetővé teszi külső kód használatát más `.pyco` f
 
 ### Statikus Import: `from X import`
 
-A felsorolt elemek **befordulnak a PRG-be**, közvetlenül használhatók:
+A statikus import **három különböző elemet** kezelhet:
+
+#### Függvény Import
+
+```python
+from math import sin, cos         # sin, cos kódja befordul
+```
+
+A függvények kódja beágyazódik a PRG-be, közvetlenül hívhatók prefix nélkül.
+
+#### Osztály Típus Import
+
+```python
+from gfx import Sprite            # Sprite TÍPUS importálása (kód NEM!)
+```
+
+Az osztály **típus definíciója** importálódik - használható típusannotációként (`obj: Sprite`).
+A kód **NEM** ágyazódik be! A metódusokat külön kell importálni.
+
+#### Metódus Import (Szelektív)
+
+```python
+from gfx.Sprite import draw       # draw metódus kódja befordul (DCE-vel)
+```
+
+Csak a megadott metódus kódja ágyazódik be, a többi metódus nem.
+**FONTOS:** Ez NEM regisztrálja a `Sprite` típust! Ha a típust is használni akarod, külön importáld.
+
+#### Tuple Import
+
+```python
+from screen import row_offsets    # Globális tuple befordul
+```
+
+#### Teljes Példa
 
 ```python
 # Fájl eleje - STATIKUS import
-from math import sin, cos         # sin, cos kódja befordul
-from gfx import Sprite, draw_line # Sprite osztály, draw_line fv befordul
-from screen import row_offsets    # Globális tuple befordul
+from math import sin, cos         # Függvények: kód befordul
+from gfx import Sprite            # Osztály: TÍPUS importálása (kód NEM!)
+from gfx.Sprite import draw, update  # Metódusok: kód befordul (DCE-vel)
+from screen import row_offsets    # Tuple: adat befordul
 
 def main():
     x = sin(0.5)                  # Közvetlen hívás, prefix nélkül!
     y = cos(0.5)
-    s: Sprite
-    s()
-    draw_line(0, 0, x, y)
+    s: Sprite                     # Típus használata - működik!
+    s()                           # __init__ (automatikusan importálva)
+    s.draw()                      # Explicit importált metódus
+    s.update()                    # Explicit importált metódus
     offset: word = row_offsets[5] # Tuple hozzáférés
 ```
 
 **Jellemzők:**
 
+| Import típus     | Befordul?       | Használat                           |
+| ---------------- | --------------- | ----------------------------------- |
+| Függvény         | ✓ Kód           | Közvetlen hívás: `sin()`            |
+| Osztály          | ✗ Csak típus    | Típusannotáció: `obj: Sprite`       |
+| Metódus          | ✓ Kód (DCE)     | Metódus hívás: `obj.draw()`         |
+| Tuple            | ✓ Adat          | Elem hozzáférés: `tuple[i]`         |
+
 | Tulajdonság      | Érték                                       |
 | ---------------- | ------------------------------------------- |
-| Compile-time     | Kód befordul a PRG-be                       |
+| Compile-time     | Típus/kód befordul a PRG-be                 |
 | Runtime overhead | Nincs (statikus linkelés)                   |
 | Használat        | Prefix nélkül: `sin()`, `Sprite`, `tuple[]` |
 | Tree-shaking     | Csak a felsorolt elemek fordulnak be        |
@@ -853,23 +896,45 @@ A `.pmi` fájl kompakt bináris formátumú, hogy a C64-en futó fordító is tu
 
 #### DCE (Dead Code Elimination) Támogatás
 
-A PMI v4 tartalmazza az offset, size és dependency információkat minden függvényhez és metódushoz. Ez lehetővé teszi a **szelektív osztály importot**:
+A PMI v4 tartalmazza az offset, size és dependency információkat minden függvényhez és metódushoz. Ez lehetővé teszi a **szelektív metódus importot**:
 
 ```python
-# Teljes import - MINDEN metódus beágyazva (~11KB)
+# Típus import - kód NEM ágyazódik be!
 from text import Text
 
-# Szelektív import - CSAK a megadott metódusok beágyazva (~500B)
+# Metódus import - CSAK a megadott metódusok kódja ágyazódik be (~500B)
 from text.Text import print_at
 ```
 
+**Az új import szemantika (Objective-C kategória stílus):**
+
+A típus és a metódusok **függetlenek** egymástól:
+- `from module import Class` → Csak a típus definíció (kód NEM!)
+- `from module.Class import method` → Csak a metódus kódja (típus NEM regisztrálódik!)
+
+Ez lehetővé teszi, hogy **több modulból** importáljunk metódusokat ugyanahhoz az osztályhoz:
+
+```python
+from text import Text                # Text TÍPUS a text modulból
+from text.Text import print_at       # print_at METÓDUS a text modulból
+from extended_text.Text import fancy_print  # fancy_print METÓDUS másik modulból!
+
+def main():
+    t: Text                          # OK - típus a text-ből
+    t.print_at(0, 0, s"Hello")       # OK - text.Text.print_at
+    t.fancy_print(s"World")          # OK - extended_text.Text.fancy_print
+```
+
+**FONTOS:** A metódus import **NEM** regisztrálja a típust! Ha típusannotációhoz is kell, külön kell importálni.
+
 **Hogyan működik:**
 1. A fordító beolvassa a PMI-t és megkapja a DCE infót minden metódushoz
-2. Szelektív import esetén meghatározza, mely metódusok kellenek:
+2. Metódus import esetén meghatározza, mely metódusok kellenek:
    - Explicit importált metódusok
    - `__defaults__` és `__init__` (mindig kellenek a konstruktorhoz)
    - Tranzitív függőségek (ha A metódus hívja B-t, B is benne lesz)
 3. Csak a szükséges kód chunk-ok kerülnek a végleges programba
+4. A metódusok a `_imported_class_methods` dict-ben tárolódnak, NEM a típus részeként
 
 **Példa DCE info a PMI-ben:**
 ```
@@ -1356,11 +1421,22 @@ Runtime Error: Module format error (invalid magic)
 
 ## Összefoglalás
 
+### Statikus Import Típusok
+
+| Szintaxis                   | Mi importálódik?    | Használat                |
+| --------------------------- | ------------------- | ------------------------ |
+| `from X import func`        | Függvény kódja      | `func()`                 |
+| `from X import Class`       | Osztály TÍPUSA      | `obj: Class`             |
+| `from X.Class import method`| Metódus kódja (DCE) | `obj.method()`           |
+| `from X import tuple`       | Tuple adata         | `tuple[i]`               |
+
+**FONTOS:** Az osztály import csak a típust hozza be, kódot NEM! A metódusokat külön kell importálni.
+
 ### Két import mód
 
 | Szintaxis            | Compile-time           | Runtime          | Használat        |
 | -------------------- | ---------------------- | ---------------- | ---------------- |
-| `from X import a, b` | Kód befordul           | -                | `a()`, `b()`     |
+| `from X import a, b` | Típus/kód befordul     | -                | `a()`, `b()`     |
 | `import X`           | Info Section + BSS ptr | `load_module(X)` | `X.a()`, `X.b()` |
 
 ### Export szabályok
@@ -1388,5 +1464,5 @@ Runtime Error: Module format error (invalid magic)
 
 ---
 
-*Verzió: 3.6 - 2026-01-18*
-*Változások: Dinamikus tuple import támogatás (`module.tuple[index]` a `load_module()` után)*
+*Verzió: 3.7 - 2026-02-02*
+*Változások: Új import szemantika - osztály import csak típust hoz be, metódus import külön (Objective-C kategória stílus)*

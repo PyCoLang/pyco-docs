@@ -277,45 +277,65 @@ Benefits of dynamic import:
 
 > **Note:** Dynamic import is a platform-specific feature. It may not be available or practical on all platforms - for example, on microcontrollers without storage (disk, SD card), dynamic loading is not possible. In such cases, only static import can be used.
 
-#### Selective Class Import
+#### Selective Class Import (Objective-C Category Style)
 
-When importing classes, you can specify which methods you actually use. This enables Dead Code Elimination (DCE) - only the specified methods (and their dependencies) will be included in the compiled program.
+Type and method imports are **independent** of each other:
+- `from module import Class` → imports the **TYPE** only (no code!)
+- `from module.Class import method` → imports the **METHOD** code only (with DCE)
+
+This allows importing methods from **multiple modules** for the same class type.
 
 **Syntax:**
 
 ```python
-from module.ClassName import method1, method2, ...
+from module import ClassName              # Import TYPE (for declarations)
+from module.ClassName import method1, method2, ...  # Import METHODS (with DCE)
 ```
 
 **Example:**
 
 ```python
-# Import only the methods we actually use
-from text.Text import print_at, clear
+# Import the type AND the methods we actually use
+from text import Text                    # Type import (no code!)
+from text.Text import print_at, clear    # Method import (with DCE)
 
 def main():
-    t: Text
-    t.print_at(0, 0, "Hello")  # ✓ Works - method was imported
-    t.clear()                   # ✓ Works - method was imported
-    t.fill(0)                   # ✗ ERROR - method was NOT imported!
+    t: Text                              # ✓ Works - type was imported
+    t.print_at(0, 0, "Hello")            # ✓ Works - method was imported
+    t.clear()                            # ✓ Works - method was imported
+    t.fill(0)                            # ✗ ERROR - method was NOT imported!
 ```
 
 **Comparison:**
 
-| Import Style                          | What's Included         |
-| ------------------------------------- | ----------------------- |
-| `from text import Text`               | ALL methods (~11KB)     |
-| `from text.Text import print_at`      | Only print_at (~500B)   |
-| `from text.Text import print_at, clear` | Both methods (~700B)  |
+| Import Style                            | What's Included           |
+| --------------------------------------- | ------------------------- |
+| `from text import Text`                 | TYPE only (no code!)      |
+| `from text.Text import print_at`        | Method code only (~500B)  |
+| `from text.Text import print_at, clear` | Both method codes (~700B) |
+
+**Combining methods from multiple modules:**
+
+```python
+from text import Text                     # Text TYPE from text module
+from text.Text import print_at            # print_at from text module
+from extended_text.Text import fancy_print  # fancy_print from another module!
+
+def main():
+    t: Text
+    t.print_at(0, 0, s"Hello")           # ✓ text.Text.print_at
+    t.fancy_print(s"World")              # ✓ extended_text.Text.fancy_print
+```
 
 **Key points:**
 
-- The class is still declared normally: `t: Text`
-- Constructor (`__init__`) and defaults (`__defaults__`) are automatically included
+- **Type import** (`from X import Class`) is needed for `obj: Class` declarations
+- **Method import** (`from X.Class import method`) embeds only the specified methods
+- Constructor (`__init__`) and defaults (`__defaults__`) are automatically included with method imports
 - Dependencies are automatically included (if `print_at` calls `put`, `put` is included)
 - Attempting to call a non-imported method is a compile-time error
 
-> **Note:** This feature is particularly valuable on memory-constrained platforms where every byte counts.
+> **Note:** This "Objective-C category style" import is particularly valuable on memory-constrained platforms where every byte counts, and allows composing functionality from multiple modules.
 
 #### Alias (`as`) Support
 

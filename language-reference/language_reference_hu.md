@@ -277,45 +277,65 @@ A dinamikus import előnyei:
 
 > **Megjegyzés:** A dinamikus import platform-specifikus feature. Nem minden platformon érhető el vagy van értelme - például mikrovezérlőknél, ahol nincs háttértár (lemez, SD kártya), a dinamikus betöltés nem lehetséges. Ilyen esetben csak a statikus import használható.
 
-#### Szelektív osztály import
+#### Szelektív osztály import (Objective-C kategória stílus)
 
-Osztályok importálásakor megadhatod, hogy mely metódusokat használod ténylegesen. Ez lehetővé teszi a Dead Code Elimination-t (DCE) - csak a megadott metódusok (és függőségeik) kerülnek a lefordított programba.
+A típus és a metódus importok **függetlenek** egymástól:
+- `from modul import Osztály` → csak a **TÍPUST** importálja (kód NEM!)
+- `from modul.Osztály import metódus` → csak a **METÓDUS** kódját importálja (DCE-vel)
+
+Ez lehetővé teszi, hogy **több modulból** importáljunk metódusokat ugyanahhoz az osztályhoz.
 
 **Szintaxis:**
 
 ```python
-from modul.OsztályNév import metódus1, metódus2, ...
+from modul import OsztályNév              # TÍPUS import (deklarációkhoz)
+from modul.OsztályNév import metódus1, metódus2, ...  # METÓDUS import (DCE-vel)
 ```
 
 **Példa:**
 
 ```python
-# Csak a ténylegesen használt metódusok importálása
-from text.Text import print_at, clear
+# A típus ÉS a ténylegesen használt metódusok importálása
+from text import Text                    # Típus import (kód nélkül!)
+from text.Text import print_at, clear    # Metódus import (DCE-vel)
 
 def main():
-    t: Text
-    t.print_at(0, 0, "Hello")  # ✓ Működik - a metódus importálva volt
-    t.clear()                   # ✓ Működik - a metódus importálva volt
-    t.fill(0)                   # ✗ HIBA - a metódus NEM volt importálva!
+    t: Text                              # ✓ Működik - a típus importálva volt
+    t.print_at(0, 0, "Hello")            # ✓ Működik - a metódus importálva volt
+    t.clear()                            # ✓ Működik - a metódus importálva volt
+    t.fill(0)                            # ✗ HIBA - a metódus NEM volt importálva!
 ```
 
 **Összehasonlítás:**
 
-| Import stílus                           | Mi kerül be          |
-| --------------------------------------- | -------------------- |
-| `from text import Text`                 | MINDEN metódus (~11KB) |
-| `from text.Text import print_at`        | Csak print_at (~500B)  |
-| `from text.Text import print_at, clear` | Mindkét metódus (~700B) |
+| Import stílus                           | Mi kerül be               |
+| --------------------------------------- | ------------------------- |
+| `from text import Text`                 | Csak TÍPUS (kód nélkül!)  |
+| `from text.Text import print_at`        | Csak metódus kód (~500B)  |
+| `from text.Text import print_at, clear` | Mindkét metódus (~700B)   |
+
+**Metódusok kombinálása több modulból:**
+
+```python
+from text import Text                     # Text TÍPUS a text modulból
+from text.Text import print_at            # print_at a text modulból
+from extended_text.Text import fancy_print  # fancy_print másik modulból!
+
+def main():
+    t: Text
+    t.print_at(0, 0, s"Hello")           # ✓ text.Text.print_at
+    t.fancy_print(s"World")              # ✓ extended_text.Text.fancy_print
+```
 
 **Fontos tudnivalók:**
 
-- Az osztályt a szokásos módon kell deklarálni: `t: Text`
-- A konstruktor (`__init__`) és alapértékek (`__defaults__`) automatikusan bekerülnek
+- **Típus import** (`from X import Class`) szükséges az `obj: Class` deklarációkhoz
+- **Metódus import** (`from X.Class import method`) csak a megadott metódusokat ágyazza be
+- A konstruktor (`__init__`) és alapértékek (`__defaults__`) automatikusan bekerülnek a metódus importtal
 - A függőségek automatikusan bekerülnek (ha `print_at` hívja `put`-ot, `put` is benne lesz)
 - Nem importált metódus hívása fordítási hiba
 
-> **Megjegyzés:** Ez a feature különösen értékes memória-korlátozott platformokon, ahol minden byte számít.
+> **Megjegyzés:** Ez az "Objective-C kategória stílusú" import különösen értékes memória-korlátozott platformokon, és lehetővé teszi több modulból származó funkcionalitás kombinálását.
 
 #### Alias (`as`) támogatás
 
