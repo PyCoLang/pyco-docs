@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Reference
 
-**Version:** 1.1
-**Date:** 2026-01-28
+**Version:** 1.2
+**Date:** 2026-02-03
 
 ## Overview
 
@@ -302,12 +302,20 @@ def main():
 ### CLI Commands
 
 ```bash
-# Build CRT from TOML
-pycoc crt game.toml -o build/game.crt
+# Build and run cartridge (recommended for development)
+pycoc run main.pyco           # Detects main.toml automatically
+pycoc run main.pyco --force   # Force recompile all modules
 
-# Force recompile
+# Compile only (no VICE launch)
+pycoc compile main.pyco       # Detects main.toml, generates .crt
+pycoc compile main.pyco -f    # Force recompile
+
+# Build CRT directly from TOML
+pycoc crt game.toml -o build/game.crt
 pycoc crt game.toml --force
 ```
+
+**Important:** Both `compile` and `run` commands automatically detect TOML configuration files (e.g., `main.toml` for `main.pyco`). The TOML file must exist alongside the main source file for multi-bank support.
 
 ### Validations
 

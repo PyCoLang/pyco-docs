@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Referencia
 
-**Verzió:** 1.1
-**Dátum:** 2026-01-28
+**Verzió:** 1.2
+**Dátum:** 2026-02-03
 
 ## Áttekintés
 
@@ -302,12 +302,20 @@ def main():
 ### CLI Parancsok
 
 ```bash
-# CRT generálás TOML-ből
-pycoc crt game.toml -o build/game.crt
+# Cartridge fordítás és futtatás (ajánlott fejlesztéshez)
+pycoc run main.pyco           # Automatikusan felismeri a main.toml-t
+pycoc run main.pyco --force   # Minden modul újrafordítása
 
-# Force újrafordítás
+# Csak fordítás (VICE nélkül)
+pycoc compile main.pyco       # Felismeri a main.toml-t, .crt-t generál
+pycoc compile main.pyco -f    # Újrafordítás kényszerítése
+
+# CRT generálás közvetlenül TOML-ből
+pycoc crt game.toml -o build/game.crt
 pycoc crt game.toml --force
 ```
+
+**Fontos:** Mind a `compile`, mind a `run` parancs automatikusan felismeri a TOML konfigurációs fájlokat (pl. `main.toml` a `main.pyco`-hoz). A TOML fájlnak a fő forrásfájl mellett kell lennie a multi-bank támogatáshoz.
 
 ### Validációk
 
