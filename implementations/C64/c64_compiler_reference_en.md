@@ -624,6 +624,68 @@ Large (≥64 byte) fill and copy operations use an SMC (Self-Modifying Code) hel
 
 > **Details:** See `docs/implementations/C64/native/cartridge_plan_en.md`
 
+#### Multi-Bank Cartridges (TOML Configuration)
+
+For larger projects, PyCo supports multi-bank EasyFlash cartridges with up to 64 banks (1MB total). Each bank is a separate module compiled with `@cartridge(8)`.
+
+**Configuration file (project.toml):**
+
+```toml
+[cartridge]
+name = "MY PROJECT"
+type = "easyflash"
+
+[cartridge.main]
+source = "main.pyco"
+bank = 0
+
+[[cartridge.modules]]
+name = "editor"
+source = "editor.pyco"
+bank = 1
+
+[[cartridge.modules]]
+name = "graphics"
+source = "graphics.pyco"
+bank = 2
+```
+
+**Build command:**
+
+```bash
+pycoc crt project.toml
+```
+
+**Importing from bank modules:**
+
+Bank modules can be imported using two syntaxes:
+
+```python
+# Import module for qualified access (module.function)
+import editor
+editor.start()
+
+# Import specific class for direct access
+from graphics import Sprite
+s: Sprite
+s.draw()
+```
+
+Both styles generate **bank dispatcher calls** (`jsr $0200`) - no code embedding occurs. The dispatcher handles bank switching automatically, supporting nested calls up to 8 levels deep.
+
+**Bank Dispatcher Memory:**
+
+The bank dispatcher occupies `$0200-$025F` (~96 bytes) and includes:
+- Bank call entry point
+- Bank stack (8 levels × 3 bytes = 24 bytes)
+- Current bank tracking
+
+**Key constraints:**
+- Bank modules must have `@cartridge(8)` decorator on `main()`
+- Bank 0 is reserved for the main program
+- Banks 1-63 available for modules
+- Each bank: max 8KB code at `$A000`
+
 ### 4.8 IRQ Decorators
 
 Four decorators are available for IRQ handling. Detailed description: [5. IRQ Handling](#5-irq-handling).

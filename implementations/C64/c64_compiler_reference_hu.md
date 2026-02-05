@@ -624,6 +624,68 @@ A nagy méretű (≥64 byte) fill és copy műveletek SMC (Self-Modifying Code) 
 
 > **Részletek:** Lásd `docs/implementations/C64/native/cartridge_plan_hu.md`
 
+#### Multi-Bank Cartridge-ek (TOML konfiguráció)
+
+Nagyobb projekteknél a PyCo támogatja a multi-bank EasyFlash cartridge-eket, akár 64 bankkal (összesen 1MB). Minden bank egy külön modul, `@cartridge(8)` dekorátorral fordítva.
+
+**Konfigurációs fájl (projekt.toml):**
+
+```toml
+[cartridge]
+name = "PROJEKTEM"
+type = "easyflash"
+
+[cartridge.main]
+source = "main.pyco"
+bank = 0
+
+[[cartridge.modules]]
+name = "editor"
+source = "editor.pyco"
+bank = 1
+
+[[cartridge.modules]]
+name = "graphics"
+source = "graphics.pyco"
+bank = 2
+```
+
+**Build parancs:**
+
+```bash
+pycoc crt projekt.toml
+```
+
+**Importálás bank modulokból:**
+
+A bank modulok két szintaxissal importálhatók:
+
+```python
+# Modul import minősített hozzáféréshez (modul.függvény)
+import editor
+editor.start()
+
+# Specifikus osztály import közvetlen hozzáféréshez
+from graphics import Sprite
+s: Sprite
+s.draw()
+```
+
+Mindkét stílus **bank dispatcher hívást** generál (`jsr $0200`) - nem történik kódbeágyazás. A dispatcher automatikusan kezeli a bankváltást, akár 8 szint mélységű beágyazott hívásokkal.
+
+**Bank Dispatcher memória:**
+
+A bank dispatcher a `$0200-$025F` (~96 byte) területet foglalja el:
+- Bank call belépési pont
+- Bank stack (8 szint × 3 byte = 24 byte)
+- Aktuális bank követése
+
+**Fontos korlátozások:**
+- A bank moduloknak `@cartridge(8)` dekorátor kell a `main()`-en
+- A 0. bank a főprogramnak van fenntartva
+- Az 1-63 bankok moduloknak használhatók
+- Minden bank: max 8KB kód a `$A000` címen
+
 ### 4.8 IRQ dekorátorok
 
 Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5. IRQ kezelés](#5-irq-kezelés).

@@ -406,6 +406,51 @@ Bank N ROML CHIPs (per module):
 
 ---
 
+## Fixed Tuples (ROM-Stored Data)
+
+The `fixed` type modifier allows placing tuples at fixed ROM addresses. The data stays directly in ROM and is **not copied** to RAM at startup (unlike the `relocate` type).
+
+### Syntax
+
+```python
+# Defined at module level
+charset: fixed[tuple[byte], 0xA800] = (0x00, 0x18, 0x3C, 0x66, ...)
+
+@cartridge(8)
+def main():
+    # Usage: addr(), len(), subscript
+    ptr: word
+    ptr = addr(charset)  # $A800
+    val: byte = charset[0]  # Direct ROM read
+```
+
+### Valid Address Ranges
+
+| Mode             | Valid range    | Example                         |
+|------------------|----------------|---------------------------------|
+| `@cartridge(8)`  | $A000-$BFFF    | `fixed[tuple[byte], 0xA800]`    |
+| `@cartridge(-8)` | $8000-$9FFF    | `fixed[tuple[byte], 0x8800]`    |
+| `@cartridge(16)` | $8000-$BFFF    | `fixed[tuple[byte], 0xB000]`    |
+
+### Use Cases
+
+- **Character sets:** Fixed address for easy VIC-II access
+- **Sprite data:** Bank-boundary aligned sprite pointers
+- **Lookup tables:** Sin/cos tables, color gradients
+- **Sound data:** SID sound samples at fixed address
+
+### Difference from `relocate`
+
+| Property         | `fixed`                | `relocate`               |
+|------------------|------------------------|--------------------------|
+| Data location    | ROM (fixed address)    | RAM (startup copy)       |
+| Startup overhead | None                   | Copy time                |
+| Modifiable?      | **NO** (ROM!)          | Yes (in RAM)             |
+| Memory usage     | ROM only               | ROM + RAM                |
+| Application      | Constant data          | Modifiable data          |
+
+---
+
 ## Flash Programming
 
 The `easyflash` library module provides flash read/write capabilities.

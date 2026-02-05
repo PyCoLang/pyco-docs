@@ -1473,6 +1473,66 @@ Runtime Error: Out of memory loading module (need 1234 bytes, have 500)
 Runtime Error: Module format error (invalid magic)
 ```
 
+## Bank Modules (Multi-Bank Cartridges)
+
+Bank modules are a third import mode, designed for EasyFlash cartridges with multiple ROM banks.
+
+### Key Differences from Static/Dynamic Import
+
+| Aspect              | Static Import       | Dynamic Import      | Bank Import              |
+| ------------------- | ------------------- | ------------------- | ------------------------ |
+| Code location       | Embedded in PRG     | Loaded from disk    | Separate ROM bank        |
+| Memory usage        | Increases PRG size  | Uses RAM at runtime | No RAM overhead          |
+| Availability        | Always              | After load_module() | Always (in cartridge)    |
+| Call mechanism      | Direct JSR          | Through BSS pointer | Bank dispatcher ($0200)  |
+
+### Import Syntax for Bank Modules
+
+Both import styles work with bank modules:
+
+```python
+# Module import - qualified access
+import editor
+editor.start()           # Bank call to bank N
+
+# From import - direct access
+from graphics import Sprite
+s: Sprite
+s.draw()                  # Bank call to bank M
+```
+
+**Critical difference from static import:** `from X import Y` does NOT embed code when X is a bank module. Instead, it registers the type for validation and generates bank dispatcher calls.
+
+### Bank Dispatcher
+
+The bank dispatcher at `$0200` handles all cross-bank calls:
+
+1. Saves current bank and return address to bank stack
+2. Switches to target bank (`$DE00`)
+3. Calls target function
+4. On return: restores previous bank and returns to caller
+
+**Nested calls:** Up to 8 levels deep (24-byte stack).
+
+### Configuration
+
+Bank modules are defined in TOML configuration:
+
+```toml
+[[cartridge.modules]]
+name = "graphics"        # Import name
+source = "graphics.pyco" # Source file
+bank = 5                 # Bank number (1-63)
+```
+
+### Requirements
+
+- Bank module must have `@cartridge(8)` on `main()`
+- All code must fit in 8KB (`$A000-$BFFF`)
+- Bank 0 reserved for main program
+
+> **Details:** See [C64 Compiler Reference - Multi-Bank Cartridges](c64_compiler_reference_en.md#multi-bank-cartridges-toml-configuration)
+
 ## Summary
 
 ### Static Import Types
@@ -1518,5 +1578,5 @@ Runtime Error: Module format error (invalid magic)
 
 ---
 
-*Version: 3.8 - 2026-02-02*
-*Changes: New import semantics - class import only brings type, method import separate (Objective-C category style)*
+*Version: 3.9 - 2026-02-04*
+*Changes: Added Bank Modules section for multi-bank EasyFlash cartridges*

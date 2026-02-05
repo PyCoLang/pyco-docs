@@ -1419,6 +1419,66 @@ Runtime Error: Out of memory loading module (need 1234 bytes, have 500)
 Runtime Error: Module format error (invalid magic)
 ```
 
+## Bank Modulok (Multi-Bank Cartridge-ek)
+
+A bank modulok egy harmadik import mód, többbankos EasyFlash cartridge-ekhez tervezve.
+
+### Fő különbségek a statikus/dinamikus importtól
+
+| Szempont            | Statikus Import     | Dinamikus Import    | Bank Import              |
+| ------------------- | ------------------- | ------------------- | ------------------------ |
+| Kód helye           | PRG-be beágyazva    | Lemezről betöltve   | Külön ROM bank           |
+| Memória használat   | Növeli a PRG méretet| RAM-ot használ      | Nincs RAM overhead       |
+| Elérhetőség         | Mindig              | load_module() után  | Mindig (cartridge-ben)   |
+| Hívás mechanizmus   | Közvetlen JSR       | BSS pointeren át    | Bank dispatcher ($0200)  |
+
+### Import szintaxis bank modulokhoz
+
+Mindkét import stílus működik bank modulokkal:
+
+```python
+# Modul import - minősített hozzáférés
+import editor
+editor.start()           # Bank hívás N bankba
+
+# From import - közvetlen hozzáférés
+from graphics import Sprite
+s: Sprite
+s.draw()                  # Bank hívás M bankba
+```
+
+**Kritikus különbség a statikus importtól:** A `from X import Y` NEM ágyazza be a kódot, ha X bank modul. Ehelyett regisztrálja a típust validációhoz és bank dispatcher hívásokat generál.
+
+### Bank Dispatcher
+
+A `$0200` címen lévő bank dispatcher kezeli az összes bank-közi hívást:
+
+1. Elmenti az aktuális bankot és visszatérési címet a bank stack-be
+2. Átvált a cél bankra (`$DE00`)
+3. Meghívja a cél függvényt
+4. Visszatéréskor: visszaállítja az előző bankot és visszatér a hívóhoz
+
+**Beágyazott hívások:** Akár 8 szint mélységig (24 byte-os stack).
+
+### Konfiguráció
+
+A bank modulok TOML konfigurációban vannak definiálva:
+
+```toml
+[[cartridge.modules]]
+name = "graphics"        # Import név
+source = "graphics.pyco" # Forrásfájl
+bank = 5                 # Bank szám (1-63)
+```
+
+### Követelmények
+
+- A bank modulnak `@cartridge(8)` dekorátor kell a `main()`-en
+- Az összes kódnak 8KB-ba kell férnie (`$A000-$BFFF`)
+- A 0. bank a főprogramnak van fenntartva
+
+> **Részletek:** Lásd [C64 Compiler Referencia - Multi-Bank Cartridge-ek](c64_compiler_reference_hu.md#multi-bank-cartridge-ek-toml-konfiguráció)
+
 ## Összefoglalás
 
 ### Statikus Import Típusok
@@ -1464,5 +1524,5 @@ Runtime Error: Module format error (invalid magic)
 
 ---
 
-*Verzió: 3.7 - 2026-02-02*
-*Változások: Új import szemantika - osztály import csak típust hoz be, metódus import külön (Objective-C kategória stílus)*
+*Verzió: 3.9 - 2026-02-04*
+*Változások: Bank Modulok szekció hozzáadva a multi-bank EasyFlash cartridge-ekhez*

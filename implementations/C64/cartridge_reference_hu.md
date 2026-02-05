@@ -406,6 +406,51 @@ Bank N ROML CHIP-ek (modulonként):
 
 ---
 
+## Fixed Tuples (ROM-ban Tárolt Adatok)
+
+A `fixed` típus módosító lehetővé teszi tuple-ök elhelyezését fix ROM címen. Az adat közvetlenül a ROM-ban marad, **nem másolódik** RAM-ba startup-kor (ellentétben a `relocate` típussal).
+
+### Szintaxis
+
+```python
+# Modul szinten definiálva
+charset: fixed[tuple[byte], 0xA800] = (0x00, 0x18, 0x3C, 0x66, ...)
+
+@cartridge(8)
+def main():
+    # Használat: addr(), len(), subscript
+    ptr: word
+    ptr = addr(charset)  # $A800
+    val: byte = charset[0]  # Közvetlen ROM olvasás
+```
+
+### Érvényes Címtartományok
+
+| Mód              | Érvényes tartomány | Példa                           |
+|------------------|--------------------|---------------------------------|
+| `@cartridge(8)`  | $A000-$BFFF        | `fixed[tuple[byte], 0xA800]`    |
+| `@cartridge(-8)` | $8000-$9FFF        | `fixed[tuple[byte], 0x8800]`    |
+| `@cartridge(16)` | $8000-$BFFF        | `fixed[tuple[byte], 0xB000]`    |
+
+### Használati Esetek
+
+- **Karakterkészletek:** Fix címen a VIC-II könnyen eléri
+- **Sprite adatok:** Bankhatáron igazított sprite pointerek
+- **Lookup táblák:** Sin/cos táblák, színátmenetek
+- **Hang adatok:** SID hangminták fix címen
+
+### Különbség a `relocate`-tól
+
+| Tulajdonság        | `fixed`                | `relocate`               |
+|--------------------|------------------------|--------------------------|
+| Adat helye         | ROM (fix cím)          | RAM (startup másolás)    |
+| Startup overhead   | Nincs                  | Másolási idő             |
+| Módosítható?       | **NEM** (ROM!)         | Igen (RAM-ban)           |
+| Memória használat  | Csak ROM               | ROM + RAM                |
+| Alkalmazás         | Állandó adatok         | Módosítandó adatok       |
+
+---
+
 ## Flash Programozás
 
 Az `easyflash` könyvtár modul biztosítja a flash írást/olvasást.
