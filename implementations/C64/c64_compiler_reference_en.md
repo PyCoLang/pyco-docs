@@ -686,6 +686,46 @@ The bank dispatcher occupies `$0200-$025F` (~96 bytes) and includes:
 - Banks 1-63 available for modules
 - Each bank: max 8KB code at `$A000`
 
+#### Fixed Tuples (ROM-Stored Data)
+
+The `fixed` type modifier allows placing tuples at fixed ROM addresses. The data stays directly in ROM and is **not copied** to RAM (unlike the `relocate` type).
+
+```python
+# Defined at module level
+charset: fixed[tuple[byte], 0xA800] = (0x00, 0x18, 0x3C, 0x66, ...)
+
+@cartridge(8)
+def main():
+    ptr: word
+    ptr = addr(charset)   # $A800
+    val: byte = charset[0]  # Direct ROM read
+    n: byte = len(charset)  # Compile-time constant
+```
+
+**Valid address ranges:**
+
+| Mode             | Valid range | Example                      |
+|------------------|-------------|------------------------------|
+| `@cartridge(8)`  | $A000-$BFFF | `fixed[tuple[byte], 0xA800]` |
+| `@cartridge(-8)` | $8000-$9FFF | `fixed[tuple[byte], 0x8800]` |
+| `@cartridge(16)` | $8000-$BFFF | `fixed[tuple[byte], 0xB000]` |
+
+**Supported operations:** `addr()`, `len()`, subscript (`data[i]`)
+
+**Difference from `relocate`:**
+
+| Property         | `fixed`             | `relocate`              |
+|------------------|---------------------|-------------------------|
+| Data location    | ROM (fixed address) | RAM (startup copy)      |
+| Startup overhead | None                | Copy time               |
+| Modifiable?      | **NO** (ROM!)       | Yes (in RAM)            |
+| Memory usage     | ROM only            | ROM + RAM               |
+
+The compiler uses `.fill` padding to physically place data at the specified ROM address.
+Multiple fixed tuples are sorted by address and emitted sequentially.
+
+**Typical use cases:** character sets, sprite data, lookup tables, sound data.
+
 ### 4.8 IRQ Decorators
 
 Four decorators are available for IRQ handling. Detailed description: [5. IRQ Handling](#5-irq-handling).
@@ -1298,7 +1338,38 @@ warp = true
 
 **Disk ID:** The 2-character ID is important for 1541 drive BAM caching. On disk change, ID change signals the drive to re-read.
 
-### 9.3 CLI Usage
+### 9.3 Project File (`__project__.toml`)
+
+For multi-file projects, a `__project__.toml` file in the project directory defines the build entrypoint. This allows compiling or running any source file in the project while always targeting the correct entrypoint.
+
+```toml
+entrypoint = "ide.toml"
+```
+
+| Key          | Type   | Description                                             |
+|--------------|--------|---------------------------------------------------------|
+| `entrypoint` | string | Path to the main `.toml` config or `.pyco` source file. |
+
+**How it works:**
+
+- `pycoc compile editor.pyco` — Detects `__project__.toml`, resolves entrypoint to the main `.pyco` source (from `[cartridge.main].source` if `.toml`), and compiles that instead.
+- `pycoc run editor.pyco` — Detects `__project__.toml`, uses the entrypoint directly (e.g., `ide.toml` triggers the full multi-bank cartridge build).
+
+**Example project structure:**
+
+```
+IDE/
+├── __project__.toml    # entrypoint = "ide.toml"
+├── ide.toml            # Cartridge config ([cartridge], modules, etc.)
+├── ide.pyco            # Main program
+├── editor.pyco         # Module (bank 2)
+├── tui.pyco            # Module (bank 63)
+└── charsets.pyco       # Module (bank 1)
+```
+
+With this setup, pressing "Run" in the IDE while editing `editor.pyco` or `tui.pyco` will automatically build and run the full cartridge.
+
+### 9.4 CLI Usage
 
 ```bash
 # Compile
@@ -1321,7 +1392,7 @@ pycoc music song.fur ...  # 3. Convert music
 pycoc d64 game.toml       # 4. Build D64
 ```
 
-### 9.4 PRG File Format
+### 9.5 PRG File Format
 
 ```
 ┌──────────────┬─────────────────────┐
@@ -1333,7 +1404,7 @@ pycoc d64 game.toml       # 4. Build D64
 
 The C64 `LOAD "FILE",8,1` command loads data to the address stored in the PRG.
 
-### 9.5 Binary Converters
+### 9.6 Binary Converters
 
 ```bash
 # Image → PRG

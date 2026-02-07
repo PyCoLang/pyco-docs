@@ -439,6 +439,22 @@ def main():
 - **Lookup tables:** Sin/cos tables, color gradients
 - **Sound data:** SID sound samples at fixed address
 
+### Implementation
+
+The compiler uses `.fill` padding to physically place the data at the specified ROM address.
+After the program code and data segment, it fills with `$FF` bytes up to the target address,
+then emits the tuple data directly:
+
+```
+$A000: Program code + data segment
+$A0xx: __program_end
+...    $FF padding (.fill)
+$A800: Fixed tuple data (physically in the ROM chip!)
+```
+
+Multiple fixed tuples are sorted by address and emitted sequentially. If program code would
+overlap a fixed tuple address, a compile-time error is raised.
+
 ### Difference from `relocate`
 
 | Property         | `fixed`                | `relocate`               |

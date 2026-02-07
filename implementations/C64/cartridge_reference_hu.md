@@ -439,6 +439,21 @@ def main():
 - **Lookup táblák:** Sin/cos táblák, színátmenetek
 - **Hang adatok:** SID hangminták fix címen
 
+### Implementáció
+
+A compiler `.fill` padding-gel helyezi az adatot a megadott ROM címre. A program kód és data
+segment után `$FF` bájtokkal tölt ki a célcímig, majd közvetlenül kiírja a tuple adatot:
+
+```
+$A000: Program kód + data segment
+$A0xx: __program_end
+...    $FF padding (.fill)
+$A800: Fixed tuple adat (fizikailag a ROM chip-ben!)
+```
+
+Több fixed tuple esetén cím szerint rendezve, egymás után kerülnek kiírásra. Ha a program
+kód átlépné a fixed tuple címét, compile-time hiba keletkezik.
+
 ### Különbség a `relocate`-tól
 
 | Tulajdonság        | `fixed`                | `relocate`               |

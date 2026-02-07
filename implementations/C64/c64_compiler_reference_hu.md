@@ -686,6 +686,46 @@ A bank dispatcher a `$0200-$025F` (~96 byte) területet foglalja el:
 - Az 1-63 bankok moduloknak használhatók
 - Minden bank: max 8KB kód a `$A000` címen
 
+#### Fixed Tuples (ROM-ban Tárolt Adatok)
+
+A `fixed` típus módosító lehetővé teszi tuple-ök elhelyezését fix ROM címen. Az adat közvetlenül a ROM-ban marad, **nem másolódik** RAM-ba (ellentétben a `relocate` típussal).
+
+```python
+# Modul szinten definiálva
+charset: fixed[tuple[byte], 0xA800] = (0x00, 0x18, 0x3C, 0x66, ...)
+
+@cartridge(8)
+def main():
+    ptr: word
+    ptr = addr(charset)   # $A800
+    val: byte = charset[0]  # Közvetlen ROM olvasás
+    n: byte = len(charset)  # Compile-time konstans
+```
+
+**Érvényes címtartományok:**
+
+| Mód              | Érvényes tartomány | Példa                        |
+|------------------|--------------------|------------------------------|
+| `@cartridge(8)`  | $A000-$BFFF        | `fixed[tuple[byte], 0xA800]` |
+| `@cartridge(-8)` | $8000-$9FFF        | `fixed[tuple[byte], 0x8800]` |
+| `@cartridge(16)` | $8000-$BFFF        | `fixed[tuple[byte], 0xB000]` |
+
+**Támogatott műveletek:** `addr()`, `len()`, subscript (`data[i]`)
+
+**Különbség a `relocate`-tól:**
+
+| Tulajdonság      | `fixed`             | `relocate`              |
+|------------------|---------------------|-------------------------|
+| Adat helye       | ROM (fix cím)       | RAM (startup másolás)   |
+| Startup overhead | Nincs               | Másolási idő            |
+| Módosítható?     | **NEM** (ROM!)      | Igen (RAM-ban)          |
+| Memória használat| Csak ROM            | ROM + RAM               |
+
+A compiler `.fill` padding-gel fizikailag a megadott ROM címre helyezi az adatot.
+Több fixed tuple esetén cím szerint rendezve kerülnek kiírásra.
+
+**Tipikus használati esetek:** karakterkészletek, sprite adatok, lookup táblák, hang adatok.
+
 ### 4.8 IRQ dekorátorok
 
 Az IRQ kezeléshez négy dekorátor áll rendelkezésre. Részletes leírás: [5. IRQ kezelés](#5-irq-kezelés).
@@ -1298,7 +1338,38 @@ warp = true
 
 **Disk ID:** A 2 karakteres ID fontos a 1541 drive BAM cache-elése miatt. Lemezcserénél az ID változása jelzi a drive-nak az újraolvasást.
 
-### 9.3 CLI használat
+### 9.3 Projekt fájl (`__project__.toml`)
+
+Több fájlból álló projekteknél a `__project__.toml` fájl a projekt könyvtárban definiálja a build belépési pontot. Ezáltal bármelyik forrásfájl fordítása vagy futtatása esetén a helyes entrypoint kerül használatra.
+
+```toml
+entrypoint = "ide.toml"
+```
+
+| Kulcs        | Típus  | Leírás                                                    |
+|--------------|--------|-----------------------------------------------------------|
+| `entrypoint` | string | A fő `.toml` config vagy `.pyco` forrásfájl elérési útja. |
+
+**Működés:**
+
+- `pycoc compile editor.pyco` — Észleli a `__project__.toml`-t, feloldja az entrypointot a fő `.pyco` forrásra (ha `.toml`, akkor a `[cartridge.main].source`-ból), és azt fordítja helyette.
+- `pycoc run editor.pyco` — Észleli a `__project__.toml`-t, közvetlenül az entrypointot használja (pl. `ide.toml` esetén a teljes multi-bank cartridge build indul).
+
+**Példa projekt struktúra:**
+
+```
+IDE/
+├── __project__.toml    # entrypoint = "ide.toml"
+├── ide.toml            # Cartridge konfig ([cartridge], modulok, stb.)
+├── ide.pyco            # Fő program
+├── editor.pyco         # Modul (bank 2)
+├── tui.pyco            # Modul (bank 63)
+└── charsets.pyco       # Modul (bank 1)
+```
+
+Ezzel a felállással az IDE-ben a "Run" gomb megnyomása `editor.pyco` vagy `tui.pyco` szerkesztése közben automatikusan a teljes cartridge-et fordítja és futtatja.
+
+### 9.4 CLI használat
 
 ```bash
 # Fordítás
@@ -1321,7 +1392,7 @@ pycoc music song.fur ...  # 3. Zene konvertálása
 pycoc d64 game.toml       # 4. D64 összeállítása
 ```
 
-### 9.4 PRG fájl formátum
+### 9.5 PRG fájl formátum
 
 ```
 ┌──────────────┬─────────────────────┐
@@ -1333,7 +1404,7 @@ pycoc d64 game.toml       # 4. D64 összeállítása
 
 A C64 `LOAD "FILE",8,1` parancs a PRG-ben tárolt címre tölti az adatot.
 
-### 9.5 Binary konverterek
+### 9.6 Binary konverterek
 
 ```bash
 # Kép → PRG
