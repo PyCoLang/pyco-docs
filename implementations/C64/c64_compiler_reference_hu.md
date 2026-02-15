@@ -125,15 +125,15 @@ A float regiszterek megegyeznek a C64 BASIC ROM által használt címekkel. Ez l
 
 #### Leaf function lokális változók
 
-| Cím     | Név     | Használat                               |
-| ------- | ------- | --------------------------------------- |
-| $22-$29 | LEAF_ZP | Leaf függvény lokális változók (8 byte) |
+| Cím     | Név     | Használat                                     |
+| ------- | ------- | --------------------------------------------- |
+| $22-$27 | LEAF_ZP | Leaf függvény lokális változók (6 byte)        |
 
 A "leaf" függvények (amelyek nem hívnak más függvényt) lokális változói a Zero Page-en tárolódnak. Feltételek:
 
 1. Leaf függvény (nem hív más függvényt)
 2. Nincs paramétere
-3. Lokális változók mérete ≤ 8 byte
+3. Lokális változók mérete ≤ 6 byte
 4. Nem IRQ handler, nem `@naked`, nem `@mapped`
 
 **Megtakarítás:**
@@ -163,7 +163,7 @@ A Kernal-mentes mód ugyanazokat a címeket használja, így a kilépés zökken
 
 | Cím     | Méret   | Leírás                                   |
 | ------- | ------- | ---------------------------------------- |
-| $2A-$56 | 45 byte | PyCo által nem használt terület          |
+| $28-$56 | 47 byte | PyCo által nem használt terület          |
 | $FB-$FE | 4 byte  | Commodore dokumentáció szerint is szabad |
 
 > **Megjegyzés:** A $FB-$FE terület a Commodore Programmer's Reference Guide-ban is "Free for user programs" jelöléssel szerepel. Ez a 4 byte különösen hasznos memory-mapped változóknak vagy gyors ZP pointereknek.

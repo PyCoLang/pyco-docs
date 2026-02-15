@@ -1244,6 +1244,32 @@ def example():
     # colors = other       # ERROR: cannot reassign initialized tuple
 ```
 
+#### String Literals in Tuples
+
+`tuple[char]` and `tuple[byte]` support **string literals** as elements. The compiler expands each string character into individual bytes:
+
+```python
+def example():
+    # Screen code string (s"...") - each character becomes a screen code byte
+    menu: tuple[char] = (0x10, s"MENU", 0x11)
+    # Equivalent to: (0x10, 0x0D, 0x05, 0x0E, 0x15, 0x11)
+
+    # PETSCII string ("...") - each character becomes a PETSCII byte
+    msg: tuple[char] = (0x0D, "Hello", 0x0D)
+
+    # Works in tuple[byte] too
+    data: tuple[byte] = (0xFF, s"ABC", 0x00)
+```
+
+**Rules:**
+- Only allowed in `tuple[char]` and `tuple[byte]` (not `tuple[word]`, `tuple[int]`, etc.)
+- `s"..."` strings use **screen code** encoding (for direct screen memory writes)
+- `"..."` strings use **PETSCII** encoding (for CHROUT / print output)
+- The tuple size includes all expanded characters (e.g., `(1, s"AB", 2)` has 4 elements)
+- Single character literals (`'x'`, `s'x'`) continue to work as before
+
+This is useful for building control sequences, custom screen data, or protocol packets where you mix control bytes with text content.
+
 #### Tuple Pointer Variable
 
 When a tuple variable is declared **without initialization**, it becomes a **pointer variable** that can be assigned later:

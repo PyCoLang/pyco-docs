@@ -23,7 +23,6 @@ src/pyco/compiler/codegen/
 ├── generator.py         # Main AST visitor, statements
 ├── expressions.py       # Expression code generation
 ├── emitter.py           # Assembly output builder
-├── size_estimator.py    # Branch distance estimation
 ├── float_routines.py    # Float assembly helpers
 └── fixed_routines.py    # f16/f32 assembly helpers
 ```

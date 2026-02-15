@@ -125,15 +125,15 @@ The float registers match the addresses used by the C64 BASIC ROM. This enables 
 
 #### Leaf Function Local Variables
 
-| Address   | Name    | Usage                                 |
-| --------- | ------- | ------------------------------------- |
-| $22-$29   | LEAF_ZP | Leaf function local variables (8 bytes) |
+| Address   | Name    | Usage                                     |
+| --------- | ------- | ----------------------------------------- |
+| $22-$27   | LEAF_ZP | Leaf function local variables (6 bytes)   |
 
 "Leaf" functions (that don't call other functions) store local variables in Zero Page. Requirements:
 
 1. Leaf function (doesn't call other functions)
 2. No parameters
-3. Local variables size ≤ 8 bytes
+3. Local variables size ≤ 6 bytes
 4. Not IRQ handler, not `@naked`, not `@mapped`
 
 **Savings:**
@@ -163,7 +163,7 @@ Kernal-free mode uses the same addresses for seamless exit:
 
 | Address   | Size     | Description                                         |
 | --------- | -------- | --------------------------------------------------- |
-| $2A-$56   | 45 bytes | Area not used by PyCo                               |
+| $28-$56   | 47 bytes | Area not used by PyCo                               |
 | $FB-$FE   | 4 bytes  | Also free per Commodore documentation               |
 
 > **Note:** The $FB-$FE area is marked as "Free for user programs" in the Commodore Programmer's Reference Guide. These 4 bytes are particularly useful for memory-mapped variables or fast ZP pointers.

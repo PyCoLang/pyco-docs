@@ -23,7 +23,6 @@ src/pyco/compiler/codegen/
 ├── generator.py         # Fő AST visitor, statement-ek
 ├── expressions.py       # Kifejezések kódgenerálása
 ├── emitter.py           # Assembly kimenet builder
-├── size_estimator.py    # Branch távolság becslés
 ├── float_routines.py    # Float assembly helperek
 └── fixed_routines.py    # f16/f32 assembly helperek
 ```

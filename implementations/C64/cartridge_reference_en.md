@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Reference
 
-**Version:** 1.2
-**Date:** 2026-02-03
+**Version:** 1.3
+**Date:** 2026-02-07
 
 ## Overview
 
@@ -86,7 +86,9 @@ $D000-$DFFF  I/O + EasyFlash registers
   $DE02      Control register (write-only)
   $DF00-$DF33  SMC Helper (52 bytes)
   $DF34-$DF3F  EasyFlash module SRAM variables
-  $DF40-$DF7F  Read trampoline routine
+  $DF40-$DF55  Mode switch routine (sram_set_mode)
+  $DF56-$DF7D  Read trampoline routine
+  $DF7E-$DF7F  Free
   $DF80-$DFFF  EAPI area (flash programming)
 $E000-$FFFF  Kernal ROM
 ```
@@ -119,7 +121,8 @@ $E000-$FFFF  Free RAM (8KB) - IRQ vectors here!
 | $0277-$028D | Kernal variables | Keyboard buffer, color, key repeat      |
 | $DF00-$DF33 | SMC Helper       | Fill/copy operations from SRAM          |
 | $DF34-$DF3F | EasyFlash module | Shadow registers, EAPI arguments        |
-| $DF40-$DF7F | Read trampoline  | Safe bank-switching read                |
+| $DF40-$DF55 | Mode switch      | `sram_set_mode()` - safe ROM mode switch |
+| $DF56-$DF7D | Read trampoline  | Safe bank-switching read                |
 | $DF80-$DFFF | EAPI             | Flash programming routines              |
 
 ---
@@ -167,6 +170,12 @@ def main():
 | `@irq_hook`  | V Yes       | Works (but Kernal is disabled)        |
 | `@kernal`    | X No        | Kernal is disabled                    |
 
+> **IRQ + array copy:** IRQ handlers that use array or block copy operations
+> (e.g., `array_a = array_b`, `blkcpy`) must be marked with `@relocate` so
+> they run from RAM. The SMC helper at `$DF00` uses different ZP registers
+> than the IRQ-safe temporaries, so array copy in non-relocated (ROM-based)
+> IRQ handlers is not supported.
+
 ---
 
 ## Startup Sequence
@@ -181,6 +190,7 @@ def main():
 6. **Phase 2** ($0800, in RAM):
    - Set 16KB mode ($DE02 = $07) - ROMH visible at $A000
    - Copy SMC Helper from ROMH to SRAM ($DF00)
+   - Copy Mode switch routine from ROMH to SRAM ($DF40)
    - Kernal init ($FDA3, $FD50, $FD15, $FF5B)
    - **Set Mode 6** ($01 = $36) - $8000 becomes RAM, $A000 remains ROMH
    - `JMP $A000`
@@ -196,9 +206,10 @@ def main():
 4. If found -> `JMP ($8000)` executes cartridge code
 5. **Switch to 8KB mode** ($DE02 = $06) + **SHADOW_CTRL init** ($DF35 = $06)
 6. **Copy SMC Helper** from ROMH to SRAM ($DF00)
-7. **Kernal init** ($FDA3, $FD50, $FD15, $FF5B)
-8. Initialize SSP/FP
-9. JMP main
+7. **Copy Mode switch routine** from ROMH to SRAM ($DF40)
+8. **Kernal init** ($FDA3, $FD50, $FD15, $FF5B)
+9. Initialize SSP/FP
+10. JMP main
 
 ---
 
@@ -219,10 +230,10 @@ $8100: JSR set_bank    ; return address ($8103) -> pushed to stack
 
 ### Solution 1: SRAM Trampoline (easyflash module)
 
-The `easyflash.read_byte()` function uses a routine running from SRAM ($DF50):
+The `easyflash.read_byte()` function uses a routine running from SRAM ($DF56):
 
 ```
-1. Routine in SRAM ($DF50) - ALWAYS visible, regardless of active bank
+1. Routine in SRAM ($DF56) - ALWAYS visible, regardless of active bank
 2. Switch to target bank
 3. Read byte
 4. Restore bank 0
@@ -337,7 +348,10 @@ pycoc crt game.toml --force
 | $DF35       | 1 byte   | SHADOW_CTRL (mode + LED status)       |
 | $DF36       | 1 byte   | SHADOW_INIT (EAPI initialized?)       |
 | $DF37-$DF3D | 7 bytes  | EAPI arguments                        |
-| $DF40-$DF7F | 64 bytes | Read trampoline routine               |
+| $DF3E-$DF3F | 2 bytes  | write() counter / free                |
+| $DF40-$DF55 | 22 bytes | Mode switch routine (`sram_set_mode`) |
+| $DF56-$DF7D | 40 bytes | Read trampoline routine               |
+| $DF7E-$DF7F | 2 bytes  | Free                                  |
 | $DF80-$DFFF | 128 bytes| EAPI runtime code                     |
 
 ### Why SRAM?
@@ -374,7 +388,8 @@ Bank 0 ROMH CHIP (8KB @ $A000 after mode switch / $E000 during boot):
   - Phase 3 code @ $A000 (SSP/FP init + JMP main)
   - Main program code
   - Boot code @ $BE00 (= $FE00 during boot mode)
-  - SMC Helper data
+  - SMC Helper data (52 bytes)
+  - Mode switch routine data (22 bytes)
   - Reset vector @ $BFFC -> $8000
 ```
 
@@ -395,7 +410,8 @@ Bank 0 ROML CHIP (8KB @ $8000):
 
 Bank 0 ROMH CHIP (8KB @ $E000):
   - Boot code @ $FE00
-  - SMC Helper data
+  - SMC Helper data (52 bytes)
+  - Mode switch routine data (22 bytes)
   - Reset vector @ $FFFC -> $8000
 
 Bank N ROML CHIPs (per module):
@@ -464,6 +480,49 @@ overlap a fixed tuple address, a compile-time error is raised.
 | Modifiable?      | **NO** (ROM!)          | Yes (in RAM)             |
 | Memory usage     | ROM only               | ROM + RAM                |
 | Application      | Constant data          | Modifiable data          |
+
+---
+
+## Safe Mode Switching (`sram_set_mode`)
+
+### The Problem
+
+Functions running from ROM cannot safely switch ROM modes via `$DE02`. Writing `$04` (ROM off) kills the very ROM the function is executing from. Even with interrupts disabled, the `RTS` instruction has no code to return to.
+
+### The Solution
+
+The `sram_set_mode()` function is a `@mapped(0xDF40)` function — a 22-byte routine living in SRAM, **always visible** regardless of ROM state. The compiler generates `JSR $DF40` in the **caller's** code (which must be in RAM), not in module ROM.
+
+The routine:
+1. Disables interrupts (SEI)
+2. Preserves LED state from shadow register
+3. Combines LED + new mode
+4. Updates shadow register and hardware ($DE02)
+5. Re-enables interrupts (CLI)
+6. Returns to caller (in RAM)
+
+### Usage
+
+```python
+from easyflash import sram_set_mode, EF_OFF, EF_8K, EF_16K
+
+@relocate(0x0400)
+def bootstrap():
+    sram_set_mode(EF_OFF)    # Disable ROM → $8000-$BFFF becomes RAM
+    # ... copy data, set up charset, etc. ...
+    sram_set_mode(EF_8K)     # Re-enable ROML at $8000
+```
+
+**Important:** The caller must be running from RAM (e.g., `@relocate`). The boot code automatically installs the SRAM routine during Phase 2 — no manual initialization needed for cartridge builds.
+
+### Mode Values
+
+| Constant   | Value | Effect                                   |
+|------------|-------|------------------------------------------|
+| `EF_OFF`   | $04   | ROM disabled — full RAM access           |
+| `EF_ULTIMAX` | $05 | Ultimax mode (ROML@$8000, ROMH@$E000)   |
+| `EF_8K`    | $06   | 8KB mode — ROML at $8000                 |
+| `EF_16K`   | $07   | 16KB mode — ROML@$8000 + ROMH@$A000     |
 
 ---
 

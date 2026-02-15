@@ -1244,6 +1244,32 @@ def example():
     # colors = other       # HIBA: nem lehet újra értéket adni
 ```
 
+#### String literálok tuple-ben
+
+A `tuple[char]` és `tuple[byte]` támogatja a **string literálok** használatát elemként. A fordító minden karaktert egyenként bájttá bont:
+
+```python
+def example():
+    # Screen kód string (s"...") - minden karakter screen kód bájttá válik
+    menu: tuple[char] = (0x10, s"MENU", 0x11)
+    # Egyenértékű: (0x10, 0x0D, 0x05, 0x0E, 0x15, 0x11)
+
+    # PETSCII string ("...") - minden karakter PETSCII bájttá válik
+    msg: tuple[char] = (0x0D, "Hello", 0x0D)
+
+    # tuple[byte]-ban is működik
+    data: tuple[byte] = (0xFF, s"ABC", 0x00)
+```
+
+**Szabályok:**
+- Csak `tuple[char]` és `tuple[byte]` esetén engedélyezett (`tuple[word]`, `tuple[int]` stb. esetén nem)
+- `s"..."` stringek **screen kód** kódolást használnak (közvetlen képernyőmemória-íráshoz)
+- `"..."` stringek **PETSCII** kódolást használnak (CHROUT / print kimenethez)
+- A tuple mérete tartalmazza az összes kifejtett karaktert (pl. `(1, s"AB", 2)` 4 elemű)
+- Az egyes karakter literálok (`'x'`, `s'x'`) továbbra is változatlanul működnek
+
+Hasznos vezérlő szekvenciák, egyedi képernyőadatok vagy protokoll csomagok összeállításához, ahol vezérlőbájtokat keverünk szöveges tartalommal.
+
 #### Tuple Pointer Változó
 
 Ha egy tuple változót **inicializálás nélkül** deklarálunk, az **pointer változóvá** válik, amelynek később adhatunk értéket:

@@ -101,6 +101,10 @@ ptr: tuple[byte]                 # Uninitialized (pointer)
 ptr = colors                     # Assign to data
 print(len(ptr))                  # 6
 
+# String literals in tuple[char]/tuple[byte]
+menu: tuple[char] = (0x10, s"MENU", 0x11)  # Screen codes
+msg: tuple[byte] = (0x0D, "Hello", 0x0D)   # PETSCII
+
 # Copy tuple to array
 buffer: array[byte, 10]
 buffer = colors                  # Fast memcpy

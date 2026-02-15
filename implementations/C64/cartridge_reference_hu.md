@@ -1,7 +1,7 @@
 # PyCo EasyFlash Cartridge Referencia
 
-**Verzió:** 1.2
-**Dátum:** 2026-02-03
+**Verzió:** 1.3
+**Dátum:** 2026-02-07
 
 ## Áttekintés
 
@@ -86,7 +86,9 @@ $D000-$DFFF  I/O + EasyFlash regiszterek
   $DE02      Vezérlő regiszter (csak írható)
   $DF00-$DF33  SMC Helper (52 byte)
   $DF34-$DF3F  EasyFlash modul SRAM változók
-  $DF40-$DF7F  Read trampoline rutin
+  $DF40-$DF55  Módváltó rutin (sram_set_mode)
+  $DF56-$DF7D  Read trampoline rutin
+  $DF7E-$DF7F  Szabad
   $DF80-$DFFF  EAPI terület (flash programozás)
 $E000-$FFFF  Kernal ROM
 ```
@@ -119,7 +121,8 @@ $E000-$FFFF  Szabad RAM (8KB) - IRQ vektorok itt!
 | $0277-$028D | Kernal változók  | Keyboard buffer, szín, key repeat       |
 | $DF00-$DF33 | SMC Helper       | Fill/copy műveletek SRAM-ból            |
 | $DF34-$DF3F | EasyFlash modul  | Shadow regiszterek, EAPI argumentumok   |
-| $DF40-$DF7F | Read trampoline  | Biztonságos bank-váltással olvasás      |
+| $DF40-$DF55 | Módváltó rutin   | `sram_set_mode()` - biztonságos ROM módváltás |
+| $DF56-$DF7D | Read trampoline  | Biztonságos bank-váltással olvasás      |
 | $DF80-$DFFF | EAPI             | Flash programozási rutinok              |
 
 ---
@@ -167,6 +170,12 @@ def main():
 | `@irq_hook`  | ✓ Igen        | Működik (de Kernal ki van kapcsolva)  |
 | `@kernal`    | ✗ Nem         | Kernal le van tiltva                  |
 
+> **IRQ + tömb másolás:** Az IRQ handlerek, amelyek tömb- vagy blokkmásolást
+> használnak (pl. `array_a = array_b`, `blkcpy`), `@relocate` dekorátorral
+> kell jelölni, hogy RAM-ból fussanak. A `$DF00`-as SMC helper más ZP
+> regisztereket használ, mint az IRQ-biztos ideiglenes változók, ezért a
+> nem relokált (ROM-ból futó) IRQ handlerekben a tömb másolás nem támogatott.
+
 ---
 
 ## Indítási Szekvencia
@@ -181,6 +190,7 @@ def main():
 6. **Phase 2** ($0800, RAM-ban):
    - 16KB mód beállítás ($DE02 = $07) - ROMH látható $A000-nél
    - SMC Helper másolása ROMH → SRAM ($DF00)
+   - Módváltó rutin másolása ROMH → SRAM ($DF40)
    - Kernal init ($FDA3, $FD50, $FD15, $FF5B)
    - **Mode 6 beállítás** ($01 = $36) - $8000 RAM lesz, $A000 ROMH marad
    - `JMP $A000`
@@ -196,9 +206,10 @@ def main():
 4. Ha megvan → `JMP ($8000)` végrehajtja a cartridge kódot
 5. **8KB módra váltás** ($DE02 = $06) + **SHADOW_CTRL inicializálás** ($DF35 = $06)
 6. **SMC Helper másolása** ROMH → SRAM ($DF00)
-7. **Kernal init** ($FDA3, $FD50, $FD15, $FF5B)
-8. SSP/FP inicializálása
-9. JMP main
+7. **Módváltó rutin másolása** ROMH → SRAM ($DF40)
+8. **Kernal init** ($FDA3, $FD50, $FD15, $FF5B)
+9. SSP/FP inicializálása
+10. JMP main
 
 ---
 
@@ -219,10 +230,10 @@ $8100: JSR set_bank    ; visszatérési cím ($8103) → stack-re
 
 ### Megoldás 1: SRAM Trampoline (easyflash modul)
 
-Az `easyflash.read_byte()` függvény SRAM-ból ($DF50) futó rutint használ:
+Az `easyflash.read_byte()` függvény SRAM-ból ($DF56) futó rutint használ:
 
 ```
-1. Rutin SRAM-ban ($DF50) - MINDIG látható, bármely bank aktív
+1. Rutin SRAM-ban ($DF56) - MINDIG látható, bármely bank aktív
 2. Bank váltás a cél bankra
 3. Byte olvasása
 4. Bank 0 visszaállítása
@@ -337,7 +348,10 @@ pycoc crt game.toml --force
 | $DF35       | 1 byte   | SHADOW_CTRL (mód + LED státusz)       |
 | $DF36       | 1 byte   | SHADOW_INIT (EAPI inicializált?)      |
 | $DF37-$DF3D | 7 byte   | EAPI argumentumok                     |
-| $DF40-$DF7F | 64 byte  | Read trampoline rutin                 |
+| $DF3E-$DF3F | 2 byte   | write() számláló / szabad             |
+| $DF40-$DF55 | 22 byte  | Módváltó rutin (`sram_set_mode`)      |
+| $DF56-$DF7D | 40 byte  | Read trampoline rutin                 |
+| $DF7E-$DF7F | 2 byte   | Szabad                                |
 | $DF80-$DFFF | 128 byte | EAPI futásidejű kód                   |
 
 ### Miért SRAM?
@@ -374,7 +388,8 @@ Bank 0 ROMH CHIP (8KB @ $A000 módváltás után / $E000 boot alatt):
   - Phase 3 kód @ $A000 (SSP/FP init + JMP main)
   - Main program kód
   - Boot kód @ $BE00 (= $FE00 boot módban)
-  - SMC Helper adat
+  - SMC Helper adat (52 byte)
+  - Módváltó rutin adat (22 byte)
   - Reset vektor @ $BFFC → $8000
 ```
 
@@ -395,7 +410,8 @@ Bank 0 ROML CHIP (8KB @ $8000):
 
 Bank 0 ROMH CHIP (8KB @ $E000):
   - Boot kód @ $FE00
-  - SMC Helper adat
+  - SMC Helper adat (52 byte)
+  - Módváltó rutin adat (22 byte)
   - Reset vektor @ $FFFC → $8000
 
 Bank N ROML CHIP-ek (modulonként):
@@ -463,6 +479,49 @@ kód átlépné a fixed tuple címét, compile-time hiba keletkezik.
 | Módosítható?       | **NEM** (ROM!)         | Igen (RAM-ban)           |
 | Memória használat  | Csak ROM               | ROM + RAM                |
 | Alkalmazás         | Állandó adatok         | Módosítandó adatok       |
+
+---
+
+## Biztonságos Módváltás (`sram_set_mode`)
+
+### A Probléma
+
+A ROM-ból futó függvények nem tudják biztonságosan váltani a ROM módot a `$DE02` regiszteren keresztül. A `$04` érték (ROM ki) megöli a ROM-ot, amiből épp fut a függvény. Még letiltott megszakításokkal is, az `RTS` utasításnak nincs kód, ahova visszatérhetne.
+
+### A Megoldás
+
+Az `sram_set_mode()` egy `@mapped(0xDF40)` függvény — egy 22 byte-os rutin az SRAM-ban, **mindig látható** a ROM állapotától függetlenül. A compiler `JSR $DF40`-et generál a **hívó** kódjában (aminek RAM-ban kell futnia), nem a modul ROM-ban.
+
+A rutin:
+1. Letiltja a megszakításokat (SEI)
+2. Megőrzi a LED állapotot a shadow regiszterből
+3. Kombinálja a LED + új mód értéket
+4. Frissíti a shadow regisztert és a hardvert ($DE02)
+5. Újra engedélyezi a megszakításokat (CLI)
+6. Visszatér a hívóhoz (RAM-ban)
+
+### Használat
+
+```python
+from easyflash import sram_set_mode, EF_OFF, EF_8K, EF_16K
+
+@relocate(0x0400)
+def bootstrap():
+    sram_set_mode(EF_OFF)    # ROM letiltása → $8000-$BFFF RAM lesz
+    # ... adatok másolása, charset beállítás, stb. ...
+    sram_set_mode(EF_8K)     # ROML újra engedélyezése $8000-nál
+```
+
+**Fontos:** A hívónak RAM-ból kell futnia (pl. `@relocate`). A boot kód automatikusan telepíti az SRAM rutint a Phase 2 során — cartridge build-eknél nincs szükség manuális inicializálásra.
+
+### Mód Értékek
+
+| Konstans     | Érték | Hatás                                    |
+|--------------|-------|------------------------------------------|
+| `EF_OFF`     | $04   | ROM letiltva — teljes RAM hozzáférés     |
+| `EF_ULTIMAX` | $05   | Ultimax mód (ROML@$8000, ROMH@$E000)    |
+| `EF_8K`      | $06   | 8KB mód — ROML a $8000-nál              |
+| `EF_16K`     | $07   | 16KB mód — ROML@$8000 + ROMH@$A000      |
 
 ---
 
