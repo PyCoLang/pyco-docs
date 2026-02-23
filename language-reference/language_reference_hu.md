@@ -3918,17 +3918,25 @@ memfill(tömb, érték)
 memfill(tömb, érték, darabszám)
 ```
 
+**4 paraméteres szintaxis (kitöltés offset-tel):**
+
+```python
+memfill(tömb, offset, érték, darabszám)
+```
+
 **Paraméterek:**
 
-| Paraméter    | Típus       | Leírás                                              |
-| ------------ | ----------- | --------------------------------------------------- |
-| `tömb`       | array       | Kitöltendő tömb (változó vagy osztály property)     |
-| `érték`      | elem típusa | A kitöltési érték (meg kell egyezzen az elem típussal) |
-| `darabszám`  | word        | Kitöltendő elemek száma (opcionális)                |
+| Paraméter    | Típus        | Leírás                                                 |
+| ------------ | ------------ | ------------------------------------------------------ |
+| `tömb`       | array        | Kitöltendő tömb (változó vagy osztály property)        |
+| `offset`     | word         | Kezdő elem index (csak 4 paraméteres verzió)           |
+| `érték`      | elem típusa  | A kitöltési érték (meg kell egyezzen az elem típussal) |
+| `darabszám`  | word         | Kitöltendő elemek száma (3 és 4 paraméteres verzió)   |
 
 **Működés:**
 - **2 paraméteres verzió:** A TELJES tömböt kitölti - a méret a típusdeklarációból jön
 - **3 paraméteres verzió:** Csak az első `darabszám` elemet tölti ki
+- **4 paraméteres verzió:** `darabszám` elemet tölt ki az `offset` pozíciótól kezdve
 
 **Példák:**
 
@@ -3944,6 +3952,9 @@ memfill(colorram, 1)
 
 # Csak az első 40 byte kitöltése (egy sor)
 memfill(screen, 0, 40)
+
+# 5. sor kitöltése (40 karakter a 200. pozíciótól)
+memfill(screen, 200, 32, 40)
 ```
 
 **Osztály property támogatás:**

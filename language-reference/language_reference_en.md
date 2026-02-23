@@ -4067,17 +4067,25 @@ memfill(array, value)
 memfill(array, value, count)
 ```
 
+**4-parameter syntax (fill with offset):**
+
+```python
+memfill(array, offset, value, count)
+```
+
 **Parameters:**
 
-| Parameter | Type        | Description                                        |
-| --------- | ----------- | -------------------------------------------------- |
-| `array`   | array       | Array to fill (variable or class property)         |
-| `value`   | element type| Value to fill with (must match array element type) |
-| `count`   | word        | Number of elements to fill (optional)              |
+| Parameter | Type         | Description                                        |
+| --------- | ------------ | -------------------------------------------------- |
+| `array`   | array        | Array to fill (variable or class property)         |
+| `offset`  | word         | Starting element index (4-param only)              |
+| `value`   | element type | Value to fill with (must match array element type) |
+| `count`   | word         | Number of elements to fill (3 and 4-param)         |
 
 **Key behavior:**
 - **2-parameter version:** Fills the ENTIRE array - size is taken from type declaration
 - **3-parameter version:** Fills only the first `count` elements
+- **4-parameter version:** Fills `count` elements starting at `offset`
 
 **Examples:**
 
@@ -4093,6 +4101,9 @@ memfill(colorram, 1)
 
 # Fill only first 40 bytes (one row)
 memfill(screen, 0, 40)
+
+# Fill row 5 (40 chars starting at offset 200)
+memfill(screen, 200, 32, 40)
 ```
 
 **Class property support:**
