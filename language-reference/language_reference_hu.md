@@ -1572,6 +1572,49 @@ def main():
 
 > **Tipp:** Mapped-only osztályok ideálisak hardver regiszterek típusos eléréséhez. A metódusok segítségével komplex hardver műveleteket is áttekinthetően implementálhatsz.
 
+#### Memory-mapped osztály példányok
+
+Egy **normál** osztályt (reguláris property-kkel) is hozzárendelhetsz egy fix báziscímhez a `ClassName[address]` szintaxissal:
+
+```python
+theme: SyntaxTheme[0x8814]
+```
+
+Ez az objektum property-jeit a `0x8814` címtől kezdve egymás után helyezi el, ahelyett hogy a stack-en foglalna helyet.
+
+**Nincs automatikus inicializálás:** A stack-en allokált példányokkal ellentétben a memory-mapped osztály példányok **nem** inicializálódnak automatikusan deklarációkor — még akkor sem, ha az osztálynak nincs `__init__`-je. A deklaráció csak a változónevet köti a célcímhez. Az alapértékek alkalmazásához hívd meg az inicializálót explicit módon:
+
+```python
+class SyntaxTheme:
+    keyword: byte = COL_WHITE
+    comment: byte = COL_DGRAY
+    string_lit: byte = COL_GREEN
+
+def init_editor():
+    theme: SyntaxTheme[0x8814]   # Csak deklaráció — még nem ír
+    # ... képernyő beállítása először ...
+    theme()                       # Most íródnak az alapértékek $8814-re+
+    theme.keyword = COL_YELLOW    # Egy property felülírása
+```
+
+**Miért?** A memory-mapped példányok konkrét memóriacímekre mutatnak, amelyek lehetnek hardver regiszterek, megosztott RAM vagy ROM-háttértár. Többször is deklarálhatók (pl. IRQ handlerben is). Az automatikus írás deklarációkor korai vagy destruktív lehet. Az explicit inicializálás neked adja az irányítást, hogy **mikor** történjenek az írások.
+
+Ez az **osztály property-kre** is vonatkozik:
+
+```python
+class App:
+    theme: SyntaxTheme[THEME_ADDR]   # Nincs auto-init!
+
+    def __init__():
+        self.theme()                  # Explicit init szükséges
+```
+
+| Szempont             | Stack osztály            | Mapped osztály példány         |
+|----------------------|--------------------------|--------------------------------|
+| Memória              | Stack frame              | Fix cím                        |
+| Auto-init (no init)  | Igen (deklarációkor)     | Nem (explicit `obj()` szükséges) |
+| Újrainicializálás    | `obj()` visszaállítja    | `obj()` újraírja a címre       |
+
 ### 4.5 IRQ-biztos változók (irq_safe)
 
 Az `irq_safe` egy wrapper típus, ami **atomi hozzáférést** biztosít memory-mapped változókhoz. Ez kritikus fontosságú olyan változóknál, amelyeket mind a főprogram, mind az IRQ handler használ.
@@ -3026,9 +3069,12 @@ A PyCo-ban az objektumok **közvetlenül a stack-en** tárolódnak (mint a C str
 
 | Osztály típusa | Szintaxis | Mi történik |
 |----------------|-----------|-------------|
-| **Nincs `__init__`** | `pos: Position` | Memória foglalás + **automatikus inicializálás** |
-| **Van `__init__`** | `enemy: Enemy` | Memória foglalás - az objektum UNDEFINED |
-| **Explicit init** | `enemy()` vagy `enemy(100, 50)` | Alapértékek beállítása + `__init__` meghívása |
+| **Nincs `__init__`**       | `pos: Position`               | Memória foglalás + **automatikus inicializálás**          |
+| **Van `__init__`**         | `enemy: Enemy`                | Memória foglalás - az objektum UNDEFINED                  |
+| **Explicit init**          | `enemy()` vagy `enemy(100, 50)` | Alapértékek beállítása + `__init__` meghívása           |
+| **Memory-mapped példány**  | `obj: Class[0xC000]`         | Cím kötés — **nincs auto-init** (lásd [§4.4](#44-memory-mapped-osztályok-hardver-wrapperek)) |
+
+> **Megjegyzés:** Memory-mapped osztály példányok soha nem inicializálódnak automatikusan, függetlenül attól, hogy létezik-e `__init__`. Hívd meg az `obj()`-ot explicit módon, hogy az alapértékeket a mapped címre írd.
 
 **Fő szabály:** Az `__init__` metódus megléte határozza meg, hogy kell-e explicit inicializálás:
 

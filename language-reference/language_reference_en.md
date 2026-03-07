@@ -1572,6 +1572,49 @@ def main():
 
 > **Tip:** Mapped-only classes are ideal for typed access to hardware registers. With methods, you can implement complex hardware operations in a clear way.
 
+#### Memory-mapped Class Instances
+
+You can also map an entire **normal** class (with regular properties) to a single base address using the `ClassName[address]` syntax:
+
+```python
+theme: SyntaxTheme[0x8814]
+```
+
+This places the object's properties at consecutive addresses starting from `0x8814`, instead of allocating them on the stack.
+
+**No automatic initialization:** Unlike stack-allocated instances, memory-mapped class instances are **not** auto-initialized at declaration — even if the class has no `__init__`. The declaration only binds the variable name to the target address. To apply default values, call the initializer explicitly:
+
+```python
+class SyntaxTheme:
+    keyword: byte = COL_WHITE
+    comment: byte = COL_DGRAY
+    string_lit: byte = COL_GREEN
+
+def init_editor():
+    theme: SyntaxTheme[0x8814]   # Declaration only — no writes yet
+    # ... set up screen first ...
+    theme()                       # Now defaults are written to $8814+
+    theme.keyword = COL_YELLOW    # Override one property
+```
+
+**Why?** Memory-mapped instances point to specific memory locations that may be hardware registers, shared RAM, or ROM-backed storage. They can be declared multiple times (e.g., in IRQ handlers). Writing to them at declaration time could be premature or destructive. Explicit initialization gives you control over **when** the writes happen.
+
+This also applies to **class properties**:
+
+```python
+class App:
+    theme: SyntaxTheme[THEME_ADDR]   # No auto-init!
+
+    def __init__():
+        self.theme()                  # Explicit init required
+```
+
+| Aspect              | Stack class              | Mapped class instance        |
+|---------------------|--------------------------|------------------------------|
+| Memory              | Stack frame              | Fixed address                |
+| Auto-init (no init) | Yes (at declaration)     | No (explicit `obj()` needed) |
+| Re-initialization   | `obj()` resets defaults  | `obj()` rewrites to address  |
+
 ### 4.5 IRQ-safe Variables (irq_safe)
 
 The `irq_safe` is a wrapper type that provides **atomic access** to memory-mapped variables. This is critical for variables that are used by both the main program and IRQ handlers.
@@ -3175,9 +3218,12 @@ In PyCo, objects are stored **inline on the stack** (like C structs), not as hea
 
 | Class type | Syntax | What happens |
 |------------|--------|--------------|
-| **No `__init__`** | `pos: Position` | Memory allocated + **automatically initialized** |
-| **Has `__init__`** | `enemy: Enemy` | Memory allocated - object is UNDEFINED |
-| **Explicit init** | `enemy()` or `enemy(100, 50)` | Default values set + `__init__` called |
+| **No `__init__`**          | `pos: Position`              | Memory allocated + **automatically initialized**        |
+| **Has `__init__`**         | `enemy: Enemy`               | Memory allocated - object is UNDEFINED                   |
+| **Explicit init**          | `enemy()` or `enemy(100, 50)` | Default values set + `__init__` called                  |
+| **Memory-mapped instance** | `obj: Class[0xC000]`        | Address bound — **no auto-init** (see [§4.4](#44-memory-mapped-classes-hardware-wrappers)) |
+
+> **Note:** Memory-mapped class instances are never auto-initialized, regardless of whether `__init__` exists. Call `obj()` explicitly to write defaults to the mapped address.
 
 **Key rule:** The presence of `__init__` determines whether explicit initialization is needed:
 

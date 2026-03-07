@@ -87,6 +87,7 @@ def example():
 border: byte[0xD020]                    # Single value at address
 screen: array[byte, 1000][0x0400]       # Array at address
 counter: irq_safe[word[0x0080]]         # Atomic multi-byte access
+theme: SyntaxTheme[0x8814]             # Class at address (no auto-init!)
 ```
 
 ## Tuples (read-only data)
