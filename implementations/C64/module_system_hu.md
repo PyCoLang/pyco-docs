@@ -348,7 +348,7 @@ Ha nagy lib-ekből csak néhány függvényre van szükség, készíthetsz sajá
 │     from gfx import draw_sprite    # 1 függvény            │
 │     def rotate(): ...              # saját                 │
 │                                                             │
-│   Fordítás: pycoc compile my_game_utils.pyco --module      │
+│   Fordítás: pyco compile my_game_utils.pyco --module      │
 │   Eredmény: MY_GAME_UTILS.PM (kis méret!)               │
 └────────────────────┬────────────────────────────────────────┘
                      │ dinamikus import (runtime)
@@ -392,8 +392,8 @@ def main():
 
 | Parancs                             | Eredmény  | `main()`                 |
 | ----------------------------------- | --------- | ------------------------ |
-| `pycoc compile mylib.pyco`          | mylib.prg | ✓ Benne van, lefut       |
-| `pycoc compile mylib.pyco --module` | mylib.pm  | ✗ Kimarad (tree-shaking) |
+| `pyco compile mylib.pyco`          | mylib.prg | ✓ Benne van, lefut       |
+| `pyco compile mylib.pyco --module` | mylib.pm  | ✗ Kimarad (tree-shaking) |
 
 A `--module` flag esetén a `main()` automatikusan kimarad a .pm fájlból, mert senki nem importálja/hívja. Ez nem igényel külön fájl struktúrát - egyszerűen a tree-shaking működése.
 
@@ -1022,7 +1022,7 @@ A típusok 1 vagy több byte-tal vannak kódolva:
 
 **1. Modul fordítása:**
 ```bash
-pycoc compile math.pyco --module
+pyco compile math.pyco --module
 ```
 Eredmény:
 - `math.pm` → Bináris kód (megy a C64 floppy-ra)

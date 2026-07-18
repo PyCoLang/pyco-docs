@@ -314,16 +314,16 @@ def main():
 
 ```bash
 # Build and run cartridge (recommended for development)
-pycoc run main.pyco           # Detects main.toml automatically
-pycoc run main.pyco --force   # Force recompile all modules
+pyco run main.pyco           # Detects main.toml automatically
+pyco run main.pyco --force   # Force recompile all modules
 
 # Compile only (no VICE launch)
-pycoc compile main.pyco       # Detects main.toml, generates .crt
-pycoc compile main.pyco -f    # Force recompile
+pyco compile main.pyco       # Detects main.toml, generates .crt
+pyco compile main.pyco -f    # Force recompile
 
 # Build CRT directly from TOML
-pycoc crt game.toml -o build/game.crt
-pycoc crt game.toml --force
+pyco crt game.toml -o build/game.crt
+pyco crt game.toml --force
 ```
 
 **Important:** Both `compile` and `run` commands automatically detect TOML configuration files (e.g., `main.toml` for `main.pyco`). The TOML file must exist alongside the main source file for multi-bank support.

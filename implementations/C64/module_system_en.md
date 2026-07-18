@@ -348,7 +348,7 @@ If you only need a few functions from large libraries, you can create your own m
 │     from gfx import draw_sprite    # 1 function            │
 │     def rotate(): ...              # own                   │
 │                                                             │
-│   Compile: pycoc compile my_game_utils.pyco --module       │
+│   Compile: pyco compile my_game_utils.pyco --module       │
 │   Result: MY_GAME_UTILS.PM (small size!)                   │
 └────────────────────┬────────────────────────────────────────┘
                      │ dynamic import (runtime)
@@ -392,8 +392,8 @@ def main():
 
 | Command | Result | `main()` |
 |---------|--------|----------|
-| `pycoc compile mylib.pyco` | mylib.prg | ✓ Included, runs |
-| `pycoc compile mylib.pyco --module` | mylib.pm | ✗ Excluded (tree-shaking) |
+| `pyco compile mylib.pyco` | mylib.prg | ✓ Included, runs |
+| `pyco compile mylib.pyco --module` | mylib.pm | ✗ Excluded (tree-shaking) |
 
 With `--module` flag, `main()` is automatically excluded from the .pm file because nobody imports/calls it. This doesn't require a separate file structure - it's simply how tree-shaking works.
 
@@ -1076,7 +1076,7 @@ Types are encoded as 1 or more bytes:
 
 **1. Compiling a module:**
 ```bash
-pycoc compile math.pyco --module
+pyco compile math.pyco --module
 ```
 Result:
 - `math.pm` → Binary code (goes to C64 floppy)

@@ -664,7 +664,7 @@ bank = 2
 **Build command:**
 
 ```bash
-pycoc crt project.toml
+pyco crt project.toml
 ```
 
 **Importing from bank modules:**
@@ -1363,8 +1363,8 @@ entrypoint = "ide.toml"
 
 **How it works:**
 
-- `pycoc compile editor.pyco` — Detects `__project__.toml`, resolves entrypoint to the main `.pyco` source (from `[cartridge.main].source` if `.toml`), and compiles that instead.
-- `pycoc run editor.pyco` — Detects `__project__.toml`, uses the entrypoint directly (e.g., `ide.toml` triggers the full multi-bank cartridge build).
+- `pyco compile editor.pyco` — Detects `__project__.toml`, resolves entrypoint to the main `.pyco` source (from `[cartridge.main].source` if `.toml`), and compiles that instead.
+- `pyco run editor.pyco` — Detects `__project__.toml`, uses the entrypoint directly (e.g., `ide.toml` triggers the full multi-bank cartridge build).
 
 **Example project structure:**
 
@@ -1384,23 +1384,23 @@ With this setup, pressing "Run" in the IDE while editing `editor.pyco` or `tui.p
 
 ```bash
 # Compile
-pycoc compile game.pyco              # → build/game.prg
+pyco compile game.pyco              # → build/game.prg
 
 # Create D64
-pycoc d64 game.toml                  # → build/game.d64
+pyco d64 game.toml                  # → build/game.d64
 
 # Run in VICE
-pycoc run game.pyco
-pycoc run game.toml
+pyco run game.pyco
+pyco run game.toml
 ```
 
 **Typical workflow:**
 
 ```bash
-pycoc compile game.pyco   # 1. Compile
-pycoc image title.koa ... # 2. Convert images
-pycoc music song.fur ...  # 3. Convert music
-pycoc d64 game.toml       # 4. Build D64
+pyco compile game.pyco   # 1. Compile
+pyco image title.koa ... # 2. Convert images
+pyco music song.fur ...  # 3. Convert music
+pyco d64 game.toml       # 4. Build D64
 ```
 
 ### 9.5 PRG File Format
@@ -1419,10 +1419,10 @@ The C64 `LOAD "FILE",8,1` command loads data to the address stored in the PRG.
 
 ```bash
 # Image → PRG
-pycoc image title.koa --binary -C rle -O build/
+pyco image title.koa --binary -C rle -O build/
 
 # Music → PRG
-pycoc music song.fur --binary -L 0xA000 -O build/
+pyco music song.fur --binary -L 0xA000 -O build/
 ```
 
 ---

@@ -55,7 +55,7 @@ The extension manages a single VICE instance for both Run and Debug modes. We us
 │    [▶ Run Without Debug]            [▶ Start Debugging]      │
 │         Ctrl+F5                            F5                 │
 │                │                              │               │
-│    - pycoc compile               - pycoc compile --debug     │
+│    - pyco compile               - pyco compile --debug     │
 │    - autostart + exit            - autostart                 │
 │    - VICE continues running      - set breakpoints           │
 │                                  - stopped on entry/BP       │
@@ -106,7 +106,7 @@ class ViceManager {
         // 1. Compile if needed
         if (await this.needsRecompile(pycoFile, prgFile)) {
             const debugFlag = debugMode ? '--debug' : '';
-            await exec(`pycoc compile ${debugFlag} "${pycoFile}"`);
+            await exec(`pyco compile ${debugFlag} "${pycoFile}"`);
         }
 
         // 2. Ensure VICE
@@ -153,16 +153,16 @@ Timeline:
          tryConnect() retry loop (max 5 sec, 100ms interval)
 ```
 
-### pycoc run vs Extension
+### pyco run vs Extension
 
-| Aspect      | pycoc run (CLI) | Extension   |
+| Aspect      | pyco run (CLI) | Extension   |
 |-------------|-----------------|-------------|
 | Usage       | From terminal   | From VS Code |
 | Monitor     | Text (6510)     | Binary (6502) |
 | Debug support | None          | Yes         |
 | VICE management | Own logic   | ViceManager |
 
-The `pycoc run` command **remains** for CLI usage, but from VS Code the extension manages VICE directly.
+The `pyco run` command **remains** for CLI usage, but from VS Code the extension manages VICE directly.
 
 ## Components
 
@@ -499,7 +499,7 @@ al C:0820 .main_loop
 Debug info is **always** generated during compilation, there's no separate flag:
 
 ```bash
-pycoc compile game.pyco
+pyco compile game.pyco
 
 # Output files:
 # - build/game.prg    (program)

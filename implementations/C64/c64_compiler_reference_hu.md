@@ -664,7 +664,7 @@ bank = 2
 **Build parancs:**
 
 ```bash
-pycoc crt projekt.toml
+pyco crt projekt.toml
 ```
 
 **Importálás bank modulokból:**
@@ -1363,8 +1363,8 @@ entrypoint = "ide.toml"
 
 **Működés:**
 
-- `pycoc compile editor.pyco` — Észleli a `__project__.toml`-t, feloldja az entrypointot a fő `.pyco` forrásra (ha `.toml`, akkor a `[cartridge.main].source`-ból), és azt fordítja helyette.
-- `pycoc run editor.pyco` — Észleli a `__project__.toml`-t, közvetlenül az entrypointot használja (pl. `ide.toml` esetén a teljes multi-bank cartridge build indul).
+- `pyco compile editor.pyco` — Észleli a `__project__.toml`-t, feloldja az entrypointot a fő `.pyco` forrásra (ha `.toml`, akkor a `[cartridge.main].source`-ból), és azt fordítja helyette.
+- `pyco run editor.pyco` — Észleli a `__project__.toml`-t, közvetlenül az entrypointot használja (pl. `ide.toml` esetén a teljes multi-bank cartridge build indul).
 
 **Példa projekt struktúra:**
 
@@ -1384,23 +1384,23 @@ Ezzel a felállással az IDE-ben a "Run" gomb megnyomása `editor.pyco` vagy `tu
 
 ```bash
 # Fordítás
-pycoc compile game.pyco              # → build/game.prg
+pyco compile game.pyco              # → build/game.prg
 
 # D64 létrehozás
-pycoc d64 game.toml                  # → build/game.d64
+pyco d64 game.toml                  # → build/game.d64
 
 # Futtatás VICE-ban
-pycoc run game.pyco
-pycoc run game.toml
+pyco run game.pyco
+pyco run game.toml
 ```
 
 **Tipikus workflow:**
 
 ```bash
-pycoc compile game.pyco   # 1. Fordítás
-pycoc image title.koa ... # 2. Képek konvertálása
-pycoc music song.fur ...  # 3. Zene konvertálása
-pycoc d64 game.toml       # 4. D64 összeállítása
+pyco compile game.pyco   # 1. Fordítás
+pyco image title.koa ... # 2. Képek konvertálása
+pyco music song.fur ...  # 3. Zene konvertálása
+pyco d64 game.toml       # 4. D64 összeállítása
 ```
 
 ### 9.5 PRG fájl formátum
@@ -1419,10 +1419,10 @@ A C64 `LOAD "FILE",8,1` parancs a PRG-ben tárolt címre tölti az adatot.
 
 ```bash
 # Kép → PRG
-pycoc image title.koa --binary -C rle -O build/
+pyco image title.koa --binary -C rle -O build/
 
 # Zene → PRG
-pycoc music song.fur --binary -L 0xA000 -O build/
+pyco music song.fur --binary -L 0xA000 -O build/
 ```
 
 ---

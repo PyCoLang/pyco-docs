@@ -15,10 +15,10 @@ A PyCo tartalmaz egy beépített 6502 assemblert, amely **Kick Assembler szintax
 
 ```bash
 # Alapértelmezett: .prg generálás beépített assemblerrel
-pycoc compile program.pyco
+pyco compile program.pyco
 
 # Csak .asm generálás (ha Kick Assemblert szeretnél használni)
-pycoc compile program.pyco --asm-only
+pyco compile program.pyco --asm-only
 ```
 
 ### Python API
@@ -467,7 +467,7 @@ Ha Kick Assemblert szeretnél használni:
 
 ```bash
 # Csak .asm generálás
-pycoc compile program.pyco --asm-only
+pyco compile program.pyco --asm-only
 
 # Kick Assemblerrel fordítás
 java -jar KickAss.jar build/program.asm
