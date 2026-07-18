@@ -168,6 +168,17 @@ Kernal-free mode uses the same addresses for seamless exit:
 
 > **Note:** The $FB-$FE area is marked as "Free for user programs" in the Commodore Programmer's Reference Guide. These 4 bytes are particularly useful for memory-mapped variables or fast ZP pointers.
 
+> **Tip:** Instead of assigning these addresses manually with constants, declare them as an address pool and let the compiler allocate them:
+>
+> ```python
+> user_zp: addr_pool = addr_pool((0x28, 0x56), (0xFB, 0xFE))
+>
+> joy_delay: byte[user_zp]
+> state: word[user_zp]
+> ```
+>
+> The compiler packs the variables into the free ranges (best-fit), guarantees that multi-byte variables never overlap, and reports an error when the pool is exhausted. See the language reference, sections 4.6-4.7.
+
 ### 2.3 Stack Architecture
 
 On the C64, PyCo uses two stacks for different purposes:

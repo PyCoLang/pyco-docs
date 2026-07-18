@@ -90,6 +90,20 @@ counter: irq_safe[word[0x0080]]         # Atomic multi-byte access
 theme: SyntaxTheme[0x8814]             # Class at address (no auto-init!)
 ```
 
+### Global Variables and Address Pools
+
+```python
+# Module level - globals are always memory-mapped
+user_zp: addr_pool = addr_pool((0x28, 0x56), 0xFB)  # Compile-time pool
+ticks: byte[user_zp]                    # Address allocated from pool
+score: word[0x0334] = 0                 # Explicit address + startup init
+score_lo: byte[addr(score)]             # Overlay on an earlier global
+
+def main():
+    global ticks, score                 # Required for reads AND writes
+    ticks = ticks + 1
+```
+
 ## Tuples (read-only data)
 
 ```python

@@ -168,6 +168,17 @@ A Kernal-mentes mód ugyanazokat a címeket használja, így a kilépés zökken
 
 > **Megjegyzés:** A $FB-$FE terület a Commodore Programmer's Reference Guide-ban is "Free for user programs" jelöléssel szerepel. Ez a 4 byte különösen hasznos memory-mapped változóknak vagy gyors ZP pointereknek.
 
+> **Tipp:** Kézi címkiosztás (konstansok) helyett deklaráld ezeket címpoolként, és bízd az allokációt a fordítóra:
+>
+> ```python
+> user_zp: addr_pool = addr_pool((0x28, 0x56), (0xFB, 0xFE))
+>
+> joy_delay: byte[user_zp]
+> state: word[user_zp]
+> ```
+>
+> A fordító best-fit módon pakolja a változókat a szabad tartományokba, garantálja, hogy a többbájtos változók nem fednek át, és hibát jelez, ha a pool megtelt. Lásd a nyelvi referencia 4.6-4.7 fejezetét.
+
 ### 2.3 Stack architektúra
 
 A C64-en a PyCo két stack-et használ, külön célokra:

@@ -29,7 +29,7 @@ Az első referencia implementáció a C64-re készült.
 
 | Korlátozás                              | Indoklás                                 |
 | --------------------------------------- | ---------------------------------------- |
-| Nincsenek globális változók             | Csak NAGYBETŰS konstansok modul szinten  |
+| Globál csak memory-mapped lehet         | `type[cím]` + `global` deklaráció; nincs frame-alapú globál |
 | Változók a függvény elején              | Pascal-stílus, egyszerűbb memóriakezelés |
 | Egyszálú végrehajtás                    | Egyszerűség, könnyebb tanulhatóság       |
 | Nincs dinamikus memóriakezelés          | De könyvtárból elérhető                  |
@@ -561,11 +561,11 @@ def main():
         pass
 ```
 
-> **FONTOS:** Globális változók NEM megengedettek a PyCo-ban. Minden modul szintű értékadás NAGYBETŰS kell legyen, és konstansként kezelődik. Ha kisbetűs globális változót próbálsz létrehozni, a fordító hibát jelez.
+> **FONTOS:** Modul szinten a sima `NÉV = érték` értékadás mindig **konstans** (a név NAGYBETŰS kell legyen), nem változó: a fordító behelyettesíti a használat helyén, memóriát nem foglal neki. Klasszikus, stack frame-en tárolt globális változó a PyCo-ban nincs. Valódi globális változóból egyetlen fajta létezik, a **memory-mapped globál**, amelyet modul szinten `név: típus[cím]` formában deklarálunk és a `global` kulcsszóval hozunk függvény hatókörébe — lásd a 4.6 fejezetet.
 
 ### 2.8 Változók
 
-A változók a program futása során változó értékeket tárolnak. A PyCo-ban a változókat **típusannotációval** deklaráljuk, és csak **függvényeken vagy metódusokon belül** használhatók (globális változók nem megengedettek).
+A változók a program futása során változó értékeket tárolnak. A PyCo-ban a változókat **típusannotációval** deklaráljuk, és csak **függvényeken vagy metódusokon belül** használhatók (az egyetlen modul szintű változó a memory-mapped globál, lásd a 4.6 fejezetet).
 
 **Szintaxis:**
 
@@ -1742,6 +1742,81 @@ def main():
 ```
 
 > **Platform-specifikus részletek:** A konkrét memóriacímek, IRQ vector beállítás és a generált assembly kód a target platformtól függ. Lásd az adott platform compiler referenciáját (pl. C64, Plus/4, stb.).
+
+### 4.6 Globális változók (global)
+
+A globális változók **modul szinten deklarált memory-mapped változók**. A PyCo-ban ez az egyetlen globális változó fajta: minden globálnak fix címe van (explicit, poolból allokált vagy `addr()`-alapú), így soha nem foglalnak stack frame helyet, és abszolút címzéssel érhetők el.
+
+```python
+counter: word[0x0334] = 0      # explicit cím + induló érték
+joy_delay: byte[user_zp]       # poolból allokált cím (lásd 4.7)
+```
+
+Függvényen belüli használathoz a `global` kulcsszóval kell deklarálni, a deklarációs szekcióban (függvény eleje):
+
+```python
+counter: word[0x0334] = 0
+
+def bump():
+    global counter
+    counter = counter + 1
+
+def main():
+    global counter
+    counter = 10
+    bump()
+    print(counter)             # 11
+```
+
+**Szabályok:**
+
+- A `global` deklaráció **olvasáshoz és íráshoz is kötelező** — ez eltér a Pythontól, ahol csak értékadáshoz kell. Deklaráció nélkül a név nem látható a függvényben.
+- A `global` deklarációk a függvény eleji deklarációs szekcióba tartoznak (mint a változódeklarációk). Több név is megadható: `global a, b`.
+- A `global` nem szerepelhet modul szinten, class body-ban, sem végrehajtó utasítások után.
+- A globális nevek kisbetűsek (a NAGYBETŰ a konstansoknak van fenntartva).
+- Ha egy függvény nem deklarálja a `global x`-et, nyugodtan deklarálhat saját lokális `x`-et — a globálok sosem kerülnek implicit módon hatókörbe.
+- A globálok minden memory-mapped típust támogatnak: primitívek, `string[n]`, `array[T, n]`, mapped osztálypéldányok és az `irq_safe` wrapper.
+- Kezdőérték primitív típusoknál adható, és **egyszer, a program indulásakor** fut le, a `main()` előtt (a singleton inicializálás után). Modulokban (`--module`) kezdőérték nem megengedett.
+- A globálok `@irq` handlerben is működnek — az abszolút címzés természeténél fogva IRQ-biztos. Ez váltja ki azt a régi mintát, hogy ugyanazt a mapped változót a `main`-ben és az IRQ handlerben is újra kellett deklarálni.
+
+**Átlapolás addr()-ral:** egy későbbi deklaráció cím-pozíciója hivatkozhat egy **korábbi** globál címére:
+
+```python
+state: word[user_zp]           # poolból allokálva
+state_lo: byte[addr(state)]        # a state alsó bájtja
+state_hi: byte[addr(state) + 1]    # a state felső bájtja
+```
+
+Az `addr()`-alapú deklaráció nem foglal új memóriát — a hivatkozott globált lapolja át. Előre hivatkozás nem megengedett (single-pass szabály: a hivatkozott globált korábban kell deklarálni a forrásban).
+
+### 4.7 Címpoolok (addr_pool)
+
+A címpoolok leveszik a válladról a fix címek (különösen a zero page bájtok) kézi kiosztásának terhét. A pool **csak fordítási időben létező** konstrukció: egyszer deklarálod a szabad memóriatartományokat, a konkrét címeket pedig a fordító osztja ki automatikusan.
+
+```python
+# A tartományok inkluzívak; a sima szám egy 1 bájtos tartomány
+user_zp: addr_pool = addr_pool((0x28, 0x56), 0x02, (0xFB, 0xFE))
+
+joy_delay: byte[user_zp]           # globál poolból
+state: word[user_zp]               # 2 bájt, mindig folytonos
+
+def example():
+    temp: byte[user_zp]            # lokális is allokálhat
+
+class Counter:
+    ticks: byte[user_zp]           # osztály property is
+```
+
+**Szabályok:**
+
+- Pool csak **modul szinten** deklarálható (include fájlban is működik). A pool neve kisbetűs.
+- A pool név **kizárólag** memory-mapped deklaráció cím-pozíciójában érvényes (`byte[user_zp]`); kifejezésben nem használható.
+- Az allokáció **best-fit decreasing**: a nagyobb változók kerülnek előre, mindegyik a legszűkebb még elegendő szabad blokkba. Többbájtos változó soha nem lóg át két tartomány közötti lyukon.
+- Az allokáció **determinisztikus**: ugyanaz a forrás mindig ugyanazokat a címeket adja. Deklarációk hozzáadása, törlése vagy átrendezése átrendezheti a címeket — pont ez a lényeg: a fordító tartja karban a kiosztást helyetted.
+- Ha a pool megtelik, a fordítás hibával leáll, a hibaüzenet mutatja a pool foglaltságát.
+- A poolok fordítási egységenként működnek: a főprogram és minden bank modul függetlenül allokál. Átfedő poolok megengedettek — a pool segítség, nem korlát; az ütközésmentes tartományok megválasztása a programozó felelőssége (ne tedd bele a fordító által fenntartott zero page címeket; lásd a platformod compiler referenciáját).
+
+**Miért pool?** A kézi címkonstansoknál (`JOY_DELAY_ADDR = 0xF9`, `STATE_ADDR = 0xFD`) fejben kell tartani, mely bájtok foglaltak; egy bájttal közelebb rakott 2 bájtos változó csendben felülírja a szomszédját. Poollal a könyvelést a fordító végzi, az átfedésből pedig futásidejű rejtély helyett fordítási hiba lesz.
 
 ---
 
@@ -4195,7 +4270,7 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 | `x = 10`              | `x: int = 10`                   | Típusannotáció **kötelező**           |
 | Változó bárhol        | Változók a függvény **elején**  | Pascal-stílus                         |
 | `x = get_value()`     | ❌ Nem megengedett deklarációnál | Csak konstans alapérték               |
-| `global x`            | `X = 10` (NAGYBETŰS)            | Nincs globális változó, csak konstans |
+| `global x`            | `x: byte[cím]` + `global x`     | Csak memory-mapped globál; a `global` olvasáshoz is kell |
 | `list`, `dict`, `set` | `array[típus, méret]`           | Fix méretű, statikus                  |
 | `[1, 2, 3]`           | `= (1, 2, 3)`                   | Tuple szintaxis array-hoz             |
 | `tuple` (dinamikus)   | `tuple[típus]`                  | Fix, csak olvasható, data szegmens    |

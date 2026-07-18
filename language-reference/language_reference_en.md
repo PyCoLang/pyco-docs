@@ -29,7 +29,7 @@ The first reference implementation was made for the C64.
 
 | Restriction                           | Reason                                  |
 | ------------------------------------- | --------------------------------------- |
-| No global variables                   | Only UPPERCASE constants at module level |
+| Globals are memory-mapped only        | `type[address]` + `global` declaration; no frame-allocated globals |
 | Variables at function start           | Pascal-style, simpler memory management |
 | Single-threaded execution             | Simplicity, easier to learn             |
 | No dynamic memory management          | But available from library              |
@@ -561,11 +561,11 @@ def main():
         pass
 ```
 
-> **IMPORTANT:** Global variables are NOT allowed in PyCo. Every module-level assignment must be UPPERCASE and is treated as a constant. If you try to create a lowercase global variable, the compiler will report an error.
+> **IMPORTANT:** At module level, a plain `NAME = value` assignment is always a **constant** (the name must be UPPERCASE), not a variable: the compiler substitutes it at the point of use and allocates no memory for it. PyCo has no classic, stack-frame global variables. There is exactly one kind of real global variable — the **memory-mapped global**, declared at module level as `name: type[address]` and brought into function scope with the `global` keyword — see section 4.6.
 
 ### 2.8 Variables
 
-Variables store values that change during program execution. In PyCo, variables are declared with **type annotation** and can only be used **inside functions or methods** (global variables are not allowed).
+Variables store values that change during program execution. In PyCo, variables are declared with **type annotation** and can only be used **inside functions or methods** (the only module-level variables are memory-mapped globals, see section 4.6).
 
 **Syntax:**
 
@@ -1742,6 +1742,81 @@ def main():
 ```
 
 > **Platform-specific details:** Specific memory addresses, IRQ vector setup, and generated assembly code depend on the target platform. See the compiler reference for your platform (e.g., C64, Plus/4, etc.).
+
+### 4.6 Global Variables (global)
+
+Global variables are **memory-mapped variables declared at module level**. They are the only kind of global variable in PyCo: every global must have a fixed address (explicit, pool-allocated, or `addr()`-based), so they never consume stack frame space and are accessed with absolute addressing.
+
+```python
+counter: word[0x0334] = 0      # explicit address + startup initializer
+joy_delay: byte[user_zp]       # address allocated from a pool (see 4.7)
+```
+
+To use a global inside a function, declare it with the `global` keyword in the declaration section (function start):
+
+```python
+counter: word[0x0334] = 0
+
+def bump():
+    global counter
+    counter = counter + 1
+
+def main():
+    global counter
+    counter = 10
+    bump()
+    print(counter)             # 11
+```
+
+**Rules:**
+
+- The `global` declaration is required for **both reading and writing** — this differs from Python, where `global` is only needed for assignment. Without the declaration, the name is not visible in the function.
+- `global` declarations belong to the declaration section at the start of the function (like variable declarations). Multiple names are allowed: `global a, b`.
+- `global` cannot appear at module level, in class bodies, or after executable statements.
+- Global names must be lowercase (UPPERCASE is reserved for constants).
+- A function that does not declare `global x` may declare its own local `x` — the local simply shadows nothing, because globals never enter scope implicitly.
+- Globals support every memory-mapped type: primitives, `string[n]`, `array[T, n]`, mapped class instances, and the `irq_safe` wrapper.
+- Initializers are allowed for primitive types and run **once at program startup**, before `main()` (after singleton initialization). In modules (`--module`), initializers are not allowed.
+- Globals work in `@irq` handlers too — absolute addressing is IRQ-safe by nature. This replaces the old pattern of re-declaring the same mapped variable in `main` and the IRQ handler.
+
+**Overlays with addr():** the address position of a later declaration may reference an **earlier** global's address:
+
+```python
+state: word[user_zp]           # allocated from pool
+state_lo: byte[addr(state)]        # low byte view of state
+state_hi: byte[addr(state) + 1]    # high byte view of state
+```
+
+`addr()`-based declarations do not allocate new memory — they overlay the referenced global. Forward references are not allowed (single-pass rule: the referenced global must be declared earlier in the source).
+
+### 4.7 Address Pools (addr_pool)
+
+Address pools remove the burden of manually assigning fixed addresses (especially zero-page bytes) to memory-mapped variables. A pool is a **compile-time only** construct: you declare the free memory ranges once, and the compiler assigns concrete addresses automatically.
+
+```python
+# Ranges are inclusive; a plain number is a single-byte range
+user_zp: addr_pool = addr_pool((0x28, 0x56), 0x02, (0xFB, 0xFE))
+
+joy_delay: byte[user_zp]           # global from pool
+state: word[user_zp]               # 2 bytes, always contiguous
+
+def example():
+    temp: byte[user_zp]            # locals can allocate too
+
+class Counter:
+    ticks: byte[user_zp]           # class properties too
+```
+
+**Rules:**
+
+- Pools can only be declared at **module level** (include files work too). The pool name must be lowercase.
+- A pool name is valid **only** in the address position of a memory-mapped declaration (`byte[user_zp]`); it cannot be used in expressions.
+- Allocation is **best-fit decreasing**: larger variables are placed first, each into the tightest free block that fits. Multi-byte variables never straddle a gap between two ranges.
+- Allocation is **deterministic**: the same source always produces the same addresses. Adding, removing, or reordering declarations may reassign addresses — that is the point: the compiler keeps the layout consistent so you don't have to.
+- If a pool runs out of space, compilation fails with an error showing the pool occupancy.
+- Pools are per compilation unit: the main program and each bank module allocate independently. Overlapping pools are allowed — pools are a helper, not a constraint; choosing non-conflicting ranges is the programmer's responsibility (do not include compiler-reserved zero-page addresses; see your platform's compiler reference).
+
+**Why pools?** Manual address constants (`JOY_DELAY_ADDR = 0xF9`, `STATE_ADDR = 0xFD`) require you to track which bytes are taken; a 2-byte variable placed one byte too close silently corrupts its neighbor. With a pool, the compiler does the bookkeeping and overlap becomes a compile error instead of a runtime mystery.
 
 ---
 
@@ -4344,7 +4419,7 @@ This summary contains the most important differences between Python and PyCo.
 | `x = 10`              | `x: int = 10`                   | Type annotation **required**          |
 | Variable anywhere     | Variables at function **start** | Pascal-style                          |
 | `x = get_value()`     | ❌ Not allowed in declaration    | Only constant default value           |
-| `global x`            | `X = 10` (UPPERCASE)            | No global variable, only constant     |
+| `global x`            | `x: byte[addr]` + `global x`    | Only memory-mapped globals; `global` needed for reads too |
 | `list`, `dict`, `set` | `array[type, size]`             | Fixed size, static                    |
 | `[1, 2, 3]`           | `= (1, 2, 3)`                   | Tuple syntax for array                |
 | `tuple` (dynamic)     | `tuple[type]`                   | Fixed, read-only, data segment        |
