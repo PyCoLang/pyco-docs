@@ -664,7 +664,7 @@ bank = 2
 **Build command:**
 
 ```bash
-pyco crt project.toml
+pyco c64 crt project.toml
 ```
 
 **Importing from bank modules:**
@@ -1363,8 +1363,8 @@ entrypoint = "ide.toml"
 
 **How it works:**
 
-- `pyco compile editor.pyco` — Detects `__project__.toml`, resolves entrypoint to the main `.pyco` source (from `[cartridge.main].source` if `.toml`), and compiles that instead.
-- `pyco run editor.pyco` — Detects `__project__.toml`, uses the entrypoint directly (e.g., `ide.toml` triggers the full multi-bank cartridge build).
+- `pyco c64 compile editor.pyco` — Detects `__project__.toml`, resolves entrypoint to the main `.pyco` source (from `[cartridge.main].source` if `.toml`), and compiles that instead.
+- `pyco c64 run editor.pyco` — Detects `__project__.toml`, uses the entrypoint directly (e.g., `ide.toml` triggers the full multi-bank cartridge build).
 
 **Example project structure:**
 
@@ -1384,23 +1384,23 @@ With this setup, pressing "Run" in the IDE while editing `editor.pyco` or `tui.p
 
 ```bash
 # Compile
-pyco compile game.pyco              # → build/game.prg
+pyco c64 compile game.pyco              # → build/game.prg
 
 # Create D64
-pyco d64 game.toml                  # → build/game.d64
+pyco c64 d64 game.toml                  # → build/game.d64
 
 # Run in VICE
-pyco run game.pyco
-pyco run game.toml
+pyco c64 run game.pyco
+pyco c64 run game.toml
 ```
 
 **Typical workflow:**
 
 ```bash
-pyco compile game.pyco   # 1. Compile
-pyco image title.koa ... # 2. Convert images
+pyco c64 compile game.pyco   # 1. Compile
+pyco c64 image title.koa ... # 2. Convert images
 pyco music song.fur ...  # 3. Convert music
-pyco d64 game.toml       # 4. Build D64
+pyco c64 d64 game.toml       # 4. Build D64
 ```
 
 ### 9.5 PRG File Format
@@ -1419,7 +1419,7 @@ The C64 `LOAD "FILE",8,1` command loads data to the address stored in the PRG.
 
 ```bash
 # Image → PRG
-pyco image title.koa --binary -C rle -O build/
+pyco c64 image title.koa --binary -C rle -O build/
 
 # Music → PRG
 pyco music song.fur --binary -L 0xA000 -O build/

@@ -314,16 +314,16 @@ def main():
 
 ```bash
 # Cartridge fordítás és futtatás (ajánlott fejlesztéshez)
-pyco run main.pyco           # Automatikusan felismeri a main.toml-t
-pyco run main.pyco --force   # Minden modul újrafordítása
+pyco c64 run main.pyco           # Automatikusan felismeri a main.toml-t
+pyco c64 run main.pyco --force   # Minden modul újrafordítása
 
 # Csak fordítás (VICE nélkül)
-pyco compile main.pyco       # Felismeri a main.toml-t, .crt-t generál
-pyco compile main.pyco -f    # Újrafordítás kényszerítése
+pyco c64 compile main.pyco       # Felismeri a main.toml-t, .crt-t generál
+pyco c64 compile main.pyco -f    # Újrafordítás kényszerítése
 
 # CRT generálás közvetlenül TOML-ből
-pyco crt game.toml -o build/game.crt
-pyco crt game.toml --force
+pyco c64 crt game.toml -o build/game.crt
+pyco c64 crt game.toml --force
 ```
 
 **Fontos:** Mind a `compile`, mind a `run` parancs automatikusan felismeri a TOML konfigurációs fájlokat (pl. `main.toml` a `main.pyco`-hoz). A TOML fájlnak a fő forrásfájl mellett kell lennie a multi-bank támogatáshoz.

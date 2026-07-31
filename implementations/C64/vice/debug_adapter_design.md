@@ -55,7 +55,7 @@ The extension manages a single VICE instance for both Run and Debug modes. We us
 │    [▶ Run Without Debug]            [▶ Start Debugging]      │
 │         Ctrl+F5                            F5                 │
 │                │                              │               │
-│    - pyco compile               - pyco compile --debug     │
+│    - pyco c64 compile     - pyco c64 compile --debug     │
 │    - autostart + exit            - autostart                 │
 │    - VICE continues running      - set breakpoints           │
 │                                  - stopped on entry/BP       │
@@ -106,7 +106,7 @@ class ViceManager {
         // 1. Compile if needed
         if (await this.needsRecompile(pycoFile, prgFile)) {
             const debugFlag = debugMode ? '--debug' : '';
-            await exec(`pyco compile ${debugFlag} "${pycoFile}"`);
+            await exec(`pyco c64 compile ${debugFlag} "${pycoFile}"`);
         }
 
         // 2. Ensure VICE
@@ -153,16 +153,16 @@ Timeline:
          tryConnect() retry loop (max 5 sec, 100ms interval)
 ```
 
-### pyco run vs Extension
+### pyco c64 run vs Extension
 
-| Aspect      | pyco run (CLI) | Extension   |
-|-------------|-----------------|-------------|
-| Usage       | From terminal   | From VS Code |
-| Monitor     | Text (6510)     | Binary (6502) |
-| Debug support | None          | Yes         |
-| VICE management | Own logic   | ViceManager |
+| Aspect          | pyco c64 run (CLI) | Extension     |
+|-----------------|--------------------|---------------|
+| Usage           | From terminal      | From VS Code  |
+| Monitor         | Text (6510)        | Binary (6502) |
+| Debug support   | None               | Yes           |
+| VICE management | Own logic          | ViceManager   |
 
-The `pyco run` command **remains** for CLI usage, but from VS Code the extension manages VICE directly.
+The `pyco c64 run` command **remains** for CLI usage, but from VS Code the extension manages VICE directly.
 
 ## Components
 
@@ -499,7 +499,7 @@ al C:0820 .main_loop
 Debug info is **always** generated during compilation, there's no separate flag:
 
 ```bash
-pyco compile game.pyco
+pyco c64 compile game.pyco
 
 # Output files:
 # - build/game.prg    (program)
