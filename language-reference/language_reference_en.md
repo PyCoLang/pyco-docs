@@ -1811,10 +1811,14 @@ class Counter:
 
 - Pools can only be declared at **module level** (include files work too). The pool name must be lowercase.
 - A pool name is valid **only** in the address position of a memory-mapped declaration (`byte[user_zp]`); it cannot be used in expressions.
-- Allocation is **best-fit decreasing**: larger variables are placed first, each into the tightest free block that fits. Multi-byte variables never straddle a gap between two ranges.
-- Allocation is **deterministic**: the same source always produces the same addresses. Adding, removing, or reordering declarations may reassign addresses — that is the point: the compiler keeps the layout consistent so you don't have to.
+- Allocation is **best-fit decreasing** within each source file: larger variables are placed first, each into the tightest free block that fits. Multi-byte variables never straddle a gap between two ranges.
+- Allocation is **deterministic**: sources and includes are processed in a stable order. Adding, removing, or reordering declarations may reassign addresses — that is the point: the compiler keeps the layout consistent so you don't have to.
 - If a pool runs out of space, compilation fails with an error showing the pool occupancy.
-- Pools are per compilation unit: the main program and each bank module allocate independently. Overlapping pools are allowed — pools are a helper, not a constraint; choosing non-conflicting ranges is the programmer's responsibility (do not include compiler-reserved zero-page addresses; see your platform's compiler reference).
+- Pools live for one complete compiler invocation. Every compilation unit built in that invocation shares pools originating from the same canonical include file. This includes a cartridge main program and all modules selected by its project configuration. A new compiler invocation starts with fresh pools.
+- An include file is preprocessed once per compiler invocation and retained in memory with its pool allocations. Later `include()` calls reuse those concrete addresses and continue allocating from the same live pools.
+- Overlapping pools are allowed — pools are a helper, not a constraint; choosing non-conflicting ranges is the programmer's responsibility (do not include compiler-reserved zero-page addresses; see your platform's compiler reference).
+
+Targets may provide standard pools in their system include files. For example, the C64 `zp` include exports `pool_zp` for its user-safe zero-page ranges.
 
 **Why pools?** Manual address constants (`JOY_DELAY_ADDR = 0xF9`, `STATE_ADDR = 0xFD`) require you to track which bytes are taken; a 2-byte variable placed one byte too close silently corrupts its neighbor. With a pool, the compiler does the bookkeeping and overlap becomes a compile error instead of a runtime mystery.
 

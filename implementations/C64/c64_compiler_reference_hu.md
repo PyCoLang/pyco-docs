@@ -168,16 +168,16 @@ A Kernal-mentes mód ugyanazokat a címeket használja, így a kilépés zökken
 
 > **Megjegyzés:** A $FB-$FE terület a Commodore Programmer's Reference Guide-ban is "Free for user programs" jelöléssel szerepel. Ez a 4 byte különösen hasznos memory-mapped változóknak vagy gyors ZP pointereknek.
 
-> **Tipp:** Kézi címkiosztás (konstansok) helyett deklaráld ezeket címpoolként, és bízd az allokációt a fordítóra:
+> **Tipp:** A rendszer `zp` include ezeket a tartományokat szabványos `pool_zp` címpoolként biztosítja:
 >
 > ```python
-> user_zp: addr_pool = addr_pool((0x28, 0x56), (0xFB, 0xFE))
+> include("zp")
 >
-> joy_delay: byte[user_zp]
-> state: word[user_zp]
+> joy_delay: byte[pool_zp]
+> state: word[pool_zp]
 > ```
 >
-> A fordító best-fit módon pakolja a változókat a szabad tartományokba, garantálja, hogy a többbájtos változók nem fednek át, és hibát jelez, ha a pool megtelt. Lásd a nyelvi referencia 4.6-4.7 fejezetét.
+> A fordító best-fit módon pakolja a változókat a szabad tartományokba, garantálja, hogy a többbájtos változók nem fednek át, és hibát jelez, ha a pool megtelt. A `pool_zp` az ugyanabban az invokációban forduló minden forrás között közös, ezért a cartridge modulok sem foglalhatják le egymástól függetlenül ugyanazokat a zero page bájtokat. Lásd a nyelvi referencia 4.6-4.7 fejezetét.
 
 ### 2.3 Stack architektúra
 
@@ -586,14 +586,26 @@ EasyFlash cartridge kimenet generálása (.crt fájl). A program közvetlenül R
 @cartridge(8, 0x0300)   # 8KB mód, stack $0300-nál
 def main():
     pass
+
+ram: addr_pool = addr_pool((0x3000, 0x7FFF))
+buffer: array[byte, 1024][ram]
+stack_start: byte[ram]
+
+@cartridge(16, addr(stack_start))  # poolból kiosztott stack-cím
+def main():
+    pass
 ```
 
 **Paraméterek:**
 
-| Paraméter     | Érték     | Leírás                            |
-|---------------|-----------|-----------------------------------|
-| `mode`        | 8 vagy 16 | EasyFlash mód (8KB vagy 16KB ROM) |
-| `stack_start` | cím       | SSP kezdőcím (default: $0800)     |
+| Paraméter     | Érték                   | Leírás                            |
+|---------------|-------------------------|-----------------------------------|
+| `mode`        | 8 vagy 16               | EasyFlash mód (8KB vagy 16KB ROM) |
+| `stack_start` | cím vagy `addr(global)` | SSP kezdőcím (default: $0800)     |
+
+Az `addr(global)` alak poolból kiosztott mapped globálisra is hivatkozhat. A
+fordító a teljes pool-allokáció után oldja fel a címet, majd ellenőrzi, hogy az
+érvényes-e a kiválasztott cartridge memóriatérképben.
 
 **Memória térkép (8KB mód, Kernal bekapcsolva):**
 

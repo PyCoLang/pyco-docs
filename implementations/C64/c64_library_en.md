@@ -700,6 +700,17 @@ def main():
 
 Zero page addresses safe for user programs.
 
+The include also exports `pool_zp`, a build-lifetime address pool covering
+`$28-$56` and `$FB-$FE`. All sources compiled in the same invocation share
+this pool.
+
+```python
+include("zp")
+
+scratch: byte[pool_zp]
+pointer: word[pool_zp]
+```
+
 #### User-Safe Locations
 
 | Constant | Address | Description |

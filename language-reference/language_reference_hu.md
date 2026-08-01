@@ -1811,10 +1811,14 @@ class Counter:
 
 - Pool csak **modul szinten** deklarálható (include fájlban is működik). A pool neve kisbetűs.
 - A pool név **kizárólag** memory-mapped deklaráció cím-pozíciójában érvényes (`byte[user_zp]`); kifejezésben nem használható.
-- Az allokáció **best-fit decreasing**: a nagyobb változók kerülnek előre, mindegyik a legszűkebb még elegendő szabad blokkba. Többbájtos változó soha nem lóg át két tartomány közötti lyukon.
-- Az allokáció **determinisztikus**: ugyanaz a forrás mindig ugyanazokat a címeket adja. Deklarációk hozzáadása, törlése vagy átrendezése átrendezheti a címeket — pont ez a lényeg: a fordító tartja karban a kiosztást helyetted.
+- Az allokáció forrásfájlonként **best-fit decreasing**: a nagyobb változók kerülnek előre, mindegyik a legszűkebb még elegendő szabad blokkba. Többbájtos változó soha nem lóg át két tartomány közötti lyukon.
+- Az allokáció **determinisztikus**: a források és include-ok feldolgozási sorrendje stabil. Deklarációk hozzáadása, törlése vagy átrendezése átrendezheti a címeket — pont ez a lényeg: a fordító tartja karban a kiosztást helyetted.
 - Ha a pool megtelik, a fordítás hibával leáll, a hibaüzenet mutatja a pool foglaltságát.
-- A poolok fordítási egységenként működnek: a főprogram és minden bank modul függetlenül allokál. Átfedő poolok megengedettek — a pool segítség, nem korlát; az ütközésmentes tartományok megválasztása a programozó felelőssége (ne tedd bele a fordító által fenntartott zero page címeket; lásd a platformod compiler referenciáját).
+- A poolok egy teljes fordítóinvokáció idejéig élnek. Az adott invokációban forduló minden fordítási egység megosztja az ugyanabból a kanonikus include fájlból származó poolokat. Ez cartridge esetén a projektkonfiguráció által kijelölt főprogramot és minden modult is jelenti. Egy új fordítóinvokáció friss poolokkal indul.
+- Egy include fájlt a fordító invokációnként egyszer preprocesszál, majd a poolból kiosztott címeivel együtt a memóriában tart. A későbbi `include()` hívások ezeket a konkrét címeket használják újra, és ugyanazokból az élő poolokból folytatják az allokációt.
+- Átfedő poolok megengedettek — a pool segítség, nem korlát; az ütközésmentes tartományok megválasztása a programozó felelőssége (ne tedd bele a fordító által fenntartott zero page címeket; lásd a platformod compiler referenciáját).
+
+A targetek rendszer-include fájljai szabványos poolokat is biztosíthatnak. A C64 `zp` include például a felhasználó számára biztonságos zero page tartományokhoz exportálja a `pool_zp` poolt.
 
 **Miért pool?** A kézi címkonstansoknál (`JOY_DELAY_ADDR = 0xF9`, `STATE_ADDR = 0xFD`) fejben kell tartani, mely bájtok foglaltak; egy bájttal közelebb rakott 2 bájtos változó csendben felülírja a szomszédját. Poollal a könyvelést a fordító végzi, az átfedésből pedig futásidejű rejtély helyett fordítási hiba lesz.
 
