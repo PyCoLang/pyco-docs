@@ -801,6 +801,55 @@ A naked függvények regiszterekben kapják a paramétereket:
 
 ---
 
+### 4.10 @irq_debug
+
+Az `@irq_debug` egy kizárólag C64-en elérhető dekorátor `@irq` és `@irq_raw`
+handlerekhez:
+
+```python
+@irq_debug
+@irq
+def raster_irq(vic: byte):
+    pass
+```
+
+Az Ultimate debug buildek automatikusan, egy fix 18 ciklusos teszttel
+különböztetik meg a BRK-t a hardveres IRQ-tól, ezért a debugoláshoz nincs
+szükség forráskód-dekorátorra. Az `@irq_debug` egy adott handlerben normál és
+VICE buildben is megtartja ugyanezt a dispatchot és belépési ciklusköltséget.
+Így az időzítésérzékeny IRQ kód minden build targeten azonosan viselkedhet,
+anélkül hogy más IRQ handlerekre is rákerülne a többlet. Normál függvényen,
+`@irq_hook` vagy `@irq_helper` mellett nem használható; a Kernal az IRQ hookok
+BRK dispatchát eleve elvégzi.
+
+### 4.11 Fordításidejű `__debug_target__`
+
+A C64 backend a `__debug_target__` értéket kizárólag fordításidejű `if`
+feltételekben biztosítja. Lehetséges string értékei:
+
+| Érték        | Fordítási környezet                    |
+| ------------ | -------------------------------------- |
+| `"none"`     | Normál Compile vagy Run                |
+| `"vice"`     | Natív vagy beágyazott VICE debugging   |
+| `"ultimate"` | C64 Ultimate debugging                 |
+
+```python
+if __debug_target__ != "ultimate":
+    __nop__(5)
+```
+
+A C64 preprocessor a szemantikai elemzés és a kódgenerálás előtt kiválasztja a
+megfelelő ágat. Az eldobott ágból nem keletkezik runtime feltétel, tárhely,
+label vagy utasítás. A `==`, `!=`, `not`, `and` és `or` támogatott; az ismeretlen
+targetnév fordítási hiba. A `__debug_target__` használata fordításidejű `if`
+feltételen kívül szintén hiba.
+
+A VS Code debug indításkor automatikusan átadja a targetet. Haladó CLI
+használatnál ez a `pyco c64 compile program.pyco --debug-target ultimate`
+kapcsolóval választható ki. Az Ultimate build mindig bekapcsolja a szükséges
+BRK dispatchot; az `@irq_debug` csak azt szabályozza, hogy egy adott nyers IRQ
+más buildekben is megtartsa-e ugyanezt a belépési ciklusköltséget.
+
 ## 5. IRQ kezelés
 
 ### 5.1 Áttekintés

@@ -801,6 +801,53 @@ Naked functions receive parameters in registers:
 
 ---
 
+### 4.10 @irq_debug
+
+`@irq_debug` is a C64-only decorator for `@irq` and `@irq_raw` handlers:
+
+```python
+@irq_debug
+@irq
+def raster_irq(vic: byte):
+    pass
+```
+
+Ultimate debug builds automatically distinguish BRK from hardware IRQ with a
+fixed 18-cycle test, so debugging never requires a source decorator. On a
+specific handler, `@irq_debug` retains that same dispatch and entry cost in
+normal and VICE builds. This lets timing-sensitive IRQ code behave identically
+across build targets without imposing the overhead on unrelated IRQ handlers.
+It is invalid on ordinary functions, `@irq_hook`, or `@irq_helper`; the Kernal
+already performs BRK dispatch for IRQ hooks.
+
+### 4.11 Compile-time `__debug_target__`
+
+The C64 backend provides `__debug_target__` only inside compile-time `if`
+conditions. It has one of these string values:
+
+| Value        | Build context                         |
+| ------------ | ------------------------------------- |
+| `"none"`     | Normal Compile or Run                 |
+| `"vice"`     | Native or embedded VICE debugging     |
+| `"ultimate"` | C64 Ultimate debugging                |
+
+```python
+if __debug_target__ != "ultimate":
+    __nop__(5)
+```
+
+The C64 preprocessor selects the matching branch before semantic analysis and
+code generation. The discarded branch produces no runtime condition, storage,
+labels, or instructions. `==`, `!=`, `not`, `and`, and `or` are supported;
+unknown target names are compile errors. Using `__debug_target__` anywhere
+other than a compile-time `if` condition is also an error.
+
+VS Code supplies the target automatically for a debug launch. Advanced CLI
+use can select it with `pyco c64 compile program.pyco --debug-target ultimate`.
+An Ultimate build always enables the required BRK dispatch; `@irq_debug` only
+controls whether an individual raw IRQ keeps the same entry cost in other
+builds.
+
 ## 5. IRQ Handling
 
 ### 5.1 Overview
