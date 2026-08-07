@@ -96,6 +96,7 @@ theme: SyntaxTheme[0x8814]             # Class at address (no auto-init!)
 # Module level - globals are always memory-mapped
 user_zp: addr_pool = addr_pool((0x28, 0x56), 0xFB)  # Compile-time pool
 ticks: byte[user_zp]                    # Address allocated from pool
+STACK_START = user_zp                   # Pool's next address, without allocation
 score: word[0x0334] = 0                 # Explicit address + startup init
 score_lo: byte[addr(score)]             # Overlay on an earlier global
 

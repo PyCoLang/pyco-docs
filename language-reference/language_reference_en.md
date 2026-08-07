@@ -1799,6 +1799,7 @@ user_zp: addr_pool = addr_pool((0x28, 0x56), 0x02, (0xFB, 0xFE))
 
 joy_delay: byte[user_zp]           # global from pool
 state: word[user_zp]               # 2 bytes, always contiguous
+STACK_START = user_zp              # pool's next address as a constant
 
 def example():
     temp: byte[user_zp]            # locals can allocate too
@@ -1810,7 +1811,8 @@ class Counter:
 **Rules:**
 
 - Pools can only be declared at **module level** (include files work too). The pool name must be lowercase.
-- A pool name is valid **only** in the address position of a memory-mapped declaration (`byte[user_zp]`); it cannot be used in expressions.
+- A pool name is valid in the address position of a memory-mapped declaration (`byte[user_zp]`) or as the value of an UPPERCASE address constant (`STACK_START = user_zp`); it cannot be used in other expressions.
+- An address constant formed from a pool takes the pool's next free address as its value. It does not reserve an address, advance the pool, or create a variable or storage; it can be used directly, for example as the `@cartridge(16, STACK_START)` argument.
 - Allocation is **best-fit decreasing** within each source file: larger variables are placed first, each into the tightest free block that fits. Multi-byte variables never straddle a gap between two ranges.
 - Allocation is **deterministic**: sources and includes are processed in a stable order. Adding, removing, or reordering declarations may reassign addresses — that is the point: the compiler keeps the layout consistent so you don't have to.
 - If a pool runs out of space, compilation fails with an error showing the pool occupancy.

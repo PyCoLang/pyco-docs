@@ -589,23 +589,24 @@ def main():
 
 ram: addr_pool = addr_pool((0x3000, 0x7FFF))
 buffer: array[byte, 1024][ram]
-stack_start: byte[ram]
+STACK_START = ram
 
-@cartridge(16, addr(stack_start))  # poolból kiosztott stack-cím
+@cartridge(16, STACK_START)  # a pool következő címe, foglalás nélkül
 def main():
     pass
 ```
 
 **Paraméterek:**
 
-| Paraméter     | Érték                   | Leírás                            |
-|---------------|-------------------------|-----------------------------------|
-| `mode`        | 8 vagy 16               | EasyFlash mód (8KB vagy 16KB ROM) |
-| `stack_start` | cím vagy `addr(global)` | SSP kezdőcím (default: $0800)     |
+| Paraméter     | Érték                                  | Leírás                            |
+|---------------|----------------------------------------|-----------------------------------|
+| `mode`        | 8 vagy 16                              | EasyFlash mód (8KB vagy 16KB ROM) |
+| `stack_start` | cím, címkonstans vagy `addr(global)` | SSP kezdőcím (default: $0800)     |
 
-Az `addr(global)` alak poolból kiosztott mapped globálisra is hivatkozhat. A
-fordító a teljes pool-allokáció után oldja fel a címet, majd ellenőrzi, hogy az
-érvényes-e a kiválasztott cartridge memóriatérképben.
+A `STACK_START = ram` alak a pool következő szabad címét teszi a konstansba a
+pool léptetése nélkül. Az `addr(global)` alak poolból kiosztott mapped globálisra
+is hivatkozhat. A fordító a teljes pool-allokáció után oldja fel a címet, majd
+ellenőrzi, hogy az érvényes-e a kiválasztott cartridge memóriatérképben.
 
 **Memória térkép (8KB mód, Kernal bekapcsolva):**
 

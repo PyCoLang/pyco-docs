@@ -1799,6 +1799,7 @@ user_zp: addr_pool = addr_pool((0x28, 0x56), 0x02, (0xFB, 0xFE))
 
 joy_delay: byte[user_zp]           # globál poolból
 state: word[user_zp]               # 2 bájt, mindig folytonos
+STACK_START = user_zp              # a pool következő címe konstansként
 
 def example():
     temp: byte[user_zp]            # lokális is allokálhat
@@ -1810,7 +1811,8 @@ class Counter:
 **Szabályok:**
 
 - Pool csak **modul szinten** deklarálható (include fájlban is működik). A pool neve kisbetűs.
-- A pool név **kizárólag** memory-mapped deklaráció cím-pozíciójában érvényes (`byte[user_zp]`); kifejezésben nem használható.
+- A pool név memory-mapped deklaráció cím-pozíciójában (`byte[user_zp]`) vagy egy UPPERCASE címkonstans értékeként (`STACK_START = user_zp`) használható; más kifejezésben nem érvényes.
+- A poolból képzett címkonstans értéke a pool következő szabad címe. Nem foglal címet, nem lépteti tovább a poolt, és nem hoz létre változót vagy tárhelyet; közvetlenül használható például `@cartridge(16, STACK_START)` argumentumként.
 - Az allokáció forrásfájlonként **best-fit decreasing**: a nagyobb változók kerülnek előre, mindegyik a legszűkebb még elegendő szabad blokkba. Többbájtos változó soha nem lóg át két tartomány közötti lyukon.
 - Az allokáció **determinisztikus**: a források és include-ok feldolgozási sorrendje stabil. Deklarációk hozzáadása, törlése vagy átrendezése átrendezheti a címeket — pont ez a lényeg: a fordító tartja karban a kiosztást helyetted.
 - Ha a pool megtelik, a fordítás hibával leáll, a hibaüzenet mutatja a pool foglaltságát.

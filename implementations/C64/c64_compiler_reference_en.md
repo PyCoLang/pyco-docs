@@ -589,23 +589,25 @@ def main():
 
 ram: addr_pool = addr_pool((0x3000, 0x7FFF))
 buffer: array[byte, 1024][ram]
-stack_start: byte[ram]
+STACK_START = ram
 
-@cartridge(16, addr(stack_start))  # pool-allocated stack address
+@cartridge(16, STACK_START)  # pool's next address, without allocation
 def main():
     pass
 ```
 
 **Parameters:**
 
-| Parameter     | Value                     | Description                        |
-|---------------|---------------------------|------------------------------------|
-| `mode`        | 8 or 16                   | EasyFlash mode (8KB or 16KB ROM)   |
-| `stack_start` | address or `addr(global)` | SSP start address (default: $0800) |
+| Parameter     | Value                                        | Description                        |
+|---------------|----------------------------------------------|------------------------------------|
+| `mode`        | 8 or 16                                      | EasyFlash mode (8KB or 16KB ROM)   |
+| `stack_start` | address, address constant, or `addr(global)` | SSP start address (default: $0800) |
 
-The `addr(global)` form may reference a pool-allocated mapped global. The
-compiler resolves it after all pool allocations, then validates the resulting
-address against the selected cartridge memory map.
+The `STACK_START = ram` form stores the pool's next free address in the constant
+without advancing the pool. The `addr(global)` form may reference a
+pool-allocated mapped global. The compiler resolves it after all pool
+allocations, then validates the resulting address against the selected
+cartridge memory map.
 
 **Memory map (8KB mode, Kernal enabled):**
 
