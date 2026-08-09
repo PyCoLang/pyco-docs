@@ -2652,6 +2652,7 @@ A dekorátorok a célplatformtól függenek. Például a C64 backend a következ
 | `@naked`         | IRQ-ból hívható függvény runtime overhead nélkül           |
 | `@forward`       | Forward deklaráció kölcsönös rekurzióhoz                   |
 | `@mapped(cím)`   | Előre lefordított kód hívása fix címen                     |
+| `@staticmethod`  | Példány nélküli, osztályhoz tartozó metódus                |
 
 > **Megjegyzés:** A platform-specifikus dekorátorok részletes leírását lásd a célplatform fordító referenciájában (pl. `c64_compiler_reference.md`).
 
@@ -2974,6 +2975,30 @@ class Hero:
         self.score += points
         return self.score
 ```
+
+**Statikus metódusok:**
+
+A `@staticmethod` olyan műveletet jelöl, amely logikailag az osztályhoz
+tartozik, de nem használ objektumállapotot. Nincs implicit példánycíme, ezért a
+fordító nem állítja be a `self` mutatót, és a híváshoz nem kell objektumot
+lefoglalni.
+
+```python
+class Maze:
+    @staticmethod
+    def is_walkable(ch: char) -> bool:
+        return ch == ' ' or ch == '.'
+
+def main():
+    walkable: bool
+
+    walkable = Maze.is_walkable('.')
+```
+
+A kanonikus hívási forma `Osztály.metódus(...)`, de Pythonhoz hasonlóan egy
+meglévő objektumon keresztül is meghívható. A statikus metódus törzsében a
+`self` és a `super` nem használható. A `__new__`, `__init__` és `__str__`
+speciális metódusok nem lehetnek statikusak.
 
 ### 9.5 Öröklődés
 
@@ -4326,13 +4351,13 @@ Ez az összefoglaló a Python és PyCo közötti legfontosabb különbségeket t
 - ❌ `list`, `dict`, `set` (dinamikus kollekciók)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`)
+- ❌ Decorator (kivéve beépített: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`, `@staticmethod`)
 - ❌ `async`/`await`
 - ❌ `import` (részlegesen támogatott)
 - ❌ Többsoros string (`"""..."""`)
 - ❌ f-string (`f"Hello {name}"`)
 - ❌ `None` (használj `0`-t vagy üres stringet)
-- ❌ `__slots__`, `@property`, `@classmethod`, `@staticmethod`
+- ❌ `__slots__`, `@property`, `@classmethod`
 
 #### Gyors referencia
 

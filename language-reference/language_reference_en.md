@@ -2712,6 +2712,7 @@ Decorators depend on the target platform. For example, the C64 backend supports 
 | `@naked`         | IRQ-callable function without runtime overhead         |
 | `@forward`       | Forward declaration for mutual recursion               |
 | `@mapped(addr)`  | Call pre-compiled code at fixed address                |
+| `@staticmethod`  | Class-owned method that needs no instance              |
 
 > **Note:** For platform-specific decorator details, see the target platform compiler reference (e.g., `c64_compiler_reference.md`).
 
@@ -3123,6 +3124,29 @@ class Hero:
         self.score += points
         return self.score
 ```
+
+**Static methods:**
+
+`@staticmethod` marks an operation that logically belongs to a class but does
+not use object state. It has no implicit instance address, so the compiler does
+not set the `self` pointer and no object needs to be allocated for the call.
+
+```python
+class Maze:
+    @staticmethod
+    def is_walkable(ch: char) -> bool:
+        return ch == ' ' or ch == '.'
+
+def main():
+    walkable: bool
+
+    walkable = Maze.is_walkable('.')
+```
+
+The canonical call form is `Class.method(...)`, but as in Python it can also
+be called through an existing object. Neither `self` nor `super` is available
+inside a static method. The special methods `__new__`, `__init__`, and
+`__str__` cannot be static.
 
 ### 9.5 Inheritance
 
@@ -4476,13 +4500,13 @@ This summary contains the most important differences between Python and PyCo.
 - ❌ `list`, `dict`, `set` (dynamic collections)
 - ❌ List comprehension (`[x*2 for x in items]`)
 - ❌ Generator, `yield`
-- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`)
+- ❌ Decorator (except built-in: `@lowercase`, `@kernal`, `@noreturn`, `@origin`, `@irq`, `@irq_raw`, `@irq_hook`, `@naked`, `@forward`, `@mapped`, `@relocate`, `@staticmethod`)
 - ❌ `async`/`await`
 - ❌ `import` (partially supported)
 - ❌ Multi-line string (`"""..."""`)
 - ❌ f-string (`f"Hello {name}"`)
 - ❌ `None` (use `0` or empty string)
-- ❌ `__slots__`, `@property`, `@classmethod`, `@staticmethod`
+- ❌ `__slots__`, `@property`, `@classmethod`
 
 #### Quick Reference
 

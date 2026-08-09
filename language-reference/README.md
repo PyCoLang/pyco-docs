@@ -219,6 +219,10 @@ class Player(Position):           # Single inheritance
     def move(dx: int):
         self.x += dx
 
+    @staticmethod
+    def valid_score(score: int) -> bool:
+        return score >= 0
+
     def __str__() -> string:      # String representation
         result: string[20]
         sprint(result, self.x)
@@ -229,6 +233,7 @@ def main():
     p: Player = Player()          # No-arg constructor inline
     enemy: Player                 # Declaration
     enemy = Player(100)           # Parameterized constructor separate
+    print(Player.valid_score(10)) # Static call needs no object
 ```
 
 ### Singletons and Method Override
